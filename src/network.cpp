@@ -19,7 +19,7 @@ namespace ExaDiS {
  *-------------------------------------------------------------------------*/
 bool SerialDisNet::constrained_node(int i)
 {
-    if (conn[i].num != 2 || nodes[i].constraint == PINNED_NODE) return 1;
+    if (conn[i].num != 2 || nodes[i].constraint != UNCONSTRAINED) return 1;
     /*
     SlipPlane plane0 = network->links[conn[i][0].link].plane;
     SlipPlane plane1 = network->links[conn[i][1].link].plane;
@@ -243,7 +243,7 @@ bool SerialDisNet::merge_nodes_position(int n1, int n2, const Vec3& pos, Mat33& 
     // The merge would create a node with too many connections.
     // Revert the merge by restoring the original nodes.
     if (error) {
-        ExaDiS_log("Error: MAX_CONN = %d exceeded during merge_node()\n", MAX_CONN);
+        ExaDiS_log("Warning: MAX_CONN = %d exceeded during merge_node()\n", MAX_CONN);
         restore_node(saved_node1);
         restore_node(saved_node2);
     } else {

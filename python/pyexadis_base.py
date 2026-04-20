@@ -49,6 +49,8 @@ except ImportError:
 from enum import IntEnum
 class NodeConstraints(IntEnum):
     UNCONSTRAINED = 0
+    CORNER_NODE = 1
+    SURFACE_NODE = 6
     PINNED_NODE = 7
 
 try:

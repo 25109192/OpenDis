@@ -111,6 +111,12 @@ public:
                     }
                     if (length < rann) {
                         // Merge anyway if the segment is very small
+                        if (network->nodes[n2].constraint != UNCONSTRAINED) {
+                            std::swap(n1, n2);
+                            rmid = r2;
+                        } else if (network->nodes[n1].constraint != UNCONSTRAINED) {
+                            rmid = r1;
+                        }
                         network->merge_nodes_position(n1, n2, rmid, system->dEp);
                         system->crystal.reset_node_glide_planes(network, n1);
                         nrem++;
@@ -134,8 +140,7 @@ public:
             int nnodes = network->number_of_nodes();
             for (int i = 0; i < nnodes; i++) {
                 if (network->conn[i].num != 2) continue;
-                if (network->nodes[i].constraint == PINNED_NODE ||
-                    network->nodes[i].constraint == CORNER_NODE) continue;
+                if (network->nodes[i].constraint != UNCONSTRAINED) continue;
                 
                 Vec3 ri = network->nodes[i].pos;
                 
@@ -151,6 +156,7 @@ public:
                 Vec3 r1 = network->cell.pbc_position(ri, network->nodes[n1].pos);
                 double l1 = (r1-ri).norm();
                 
+                if (network->conn[n0].num == 0 || network->conn[n1].num == 0) continue;
                 if (l0 > minseg && l1 > minseg) continue;
                 
                 if (system->crystal.enforce_glide_planes) {

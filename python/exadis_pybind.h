@@ -199,6 +199,7 @@ struct ExaDisNet {
     int number_of_nodes() { return system->Nnodes_total(); }
     int number_of_segs() { return system->Nsegs_total(); }
     bool is_sane() { return system->get_serial_network()->sanity_check(); }
+    void set_cell(Cell& cell) { system->get_serial_network()->cell = cell; }
     
     Cell get_cell() { return system->net_mngr->get_cell(); }
     std::vector<std::vector<double> > get_nodes_array() { return system->get_serial_network()->get_nodes_array(); }
@@ -346,6 +347,7 @@ struct MobilityBind {
     MobilityBind(Mobility* _mobility, Params _params) : 
     mobility(_mobility), params(_params) {}
     std::string name() { return std::string(mobility->name()); }
+    bool non_linear() { return mobility->non_linear; }
     void compute(SystemBind& sysbind) { mobility->compute(sysbind.system); }
 };
 

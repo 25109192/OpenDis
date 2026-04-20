@@ -1623,6 +1623,10 @@ void CollisionRetroactive::retroactive_collision(System* system)
             //check_node_plane_violation(network, conn, mergenode2, "before merge collision");
             
             // Merge nodes
+            if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+                std::swap(mergenode1, mergenode2);
+                std::swap(vmn1, vmn2);
+            }
             bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
             nmerge++;
             
@@ -1799,6 +1803,10 @@ void CollisionRetroactive::retroactive_collision(System* system)
                 //check_node_plane_violation(network, conn, mergenode1, "before merge hinge collision");
                 //check_node_plane_violation(network, conn, mergenode2, "before merge hinge collision");
                 
+                if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+                    std::swap(mergenode1, mergenode2);
+                    std::swap(vmn1, vmn2);
+                }
                 bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
                 nmerge++;
                 
@@ -2094,6 +2102,10 @@ void CollisionRetroactive::retroactive_collision_parallel(System* system)
         //check_node_plane_violation(network, conn, mergenode2, "before merge collision");
         
         // Merge nodes
+        if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+            std::swap(mergenode1, mergenode2);
+            std::swap(vmn1, vmn2);
+        }
         bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
         nmerge++;
         
@@ -2273,6 +2285,10 @@ void CollisionRetroactive::retroactive_collision_parallel(System* system)
                 //check_node_plane_violation(network, conn, mergenode1, "before merge hinge collision");
                 //check_node_plane_violation(network, conn, mergenode2, "before merge hinge collision");
                 
+                if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+                    std::swap(mergenode1, mergenode2);
+                    std::swap(vmn1, vmn2);
+                }
                 bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
                 nmerge++;
                 
