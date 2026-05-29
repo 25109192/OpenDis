@@ -66,6 +66,7 @@ target_include_directories(pyexadis PRIVATE
     ${PYTHON_DEV_INC_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/../src
 )
 target_link_libraries(pyexadis PRIVATE ${EXADIS_EXTERN_LIBS})
 target_compile_definitions(pyexadis PUBLIC -DEXADIS_PYBIND)

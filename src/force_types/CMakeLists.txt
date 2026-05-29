@@ -34,3 +34,7 @@ add_custom_command(
 add_custom_target(generate_force_list DEPENDS "${FORCE_LIST_OUT}")
 
 add_dependencies(exadis generate_force_list)
+
+set_property(TARGET exadis APPEND PROPERTY 
+    EXADIS_GENERATED_HEADERS "${FORCE_LIST_OUT}"
+)

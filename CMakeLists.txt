@@ -45,7 +45,10 @@ endif()
 
 set(EXADIS_MACROS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macros")
 
-project(ExaDiS LANGUAGES CXX)
+project(ExaDiS
+    VERSION 0.2.0
+    LANGUAGES CXX
+)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 

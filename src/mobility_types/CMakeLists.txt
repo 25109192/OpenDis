@@ -34,3 +34,7 @@ add_custom_command(
 add_custom_target(generate_mobility_list DEPENDS "${MOBILITY_LIST_OUT}")
 
 add_dependencies(exadis generate_mobility_list)
+
+set_property(TARGET exadis APPEND PROPERTY 
+    EXADIS_GENERATED_HEADERS "${MOBILITY_LIST_OUT}"
+)
