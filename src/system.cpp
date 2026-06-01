@@ -626,7 +626,12 @@ void System::project_surface_node_velocity(SerialDisNet* network)
         hit_count++;
         Vec3 normal = it->second;
         Vec3& v = network->nodes[i].v;
-        v = v - dot(v, normal) * normal;
+        int ncomp = (fabs(normal.x)>0.5) + (fabs(normal.y)>0.5) + (fabs(normal.z)>0.5);
+        if (ncomp >= 2) {
+            v = Vec3(0.0);
+        } else {
+            v = v - dot(v, normal) * normal;
+        }
     }
     ExaDiS_log("Orowan: projected %d / %d surface nodes (map size=%zu)\n",
                hit_count, nnodes, surface_node_normal.size());
