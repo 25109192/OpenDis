@@ -26,8 +26,8 @@ struct MobilityGlide
     double Medge, Mscrew;
     
     struct Params {
-        double Medge = -1.0, Mscrew = -1.0;
-        Params() = default;
+        double Medge, Mscrew;
+        Params() { Medge = Mscrew = -1.0; }
         Params(double Mglide) {
             Medge = Mglide;
             Mscrew = Mglide;
@@ -36,21 +36,12 @@ struct MobilityGlide
             Medge = _Medge;
             Mscrew = _Mscrew;
         }
-        Params(Dict paramslist) {
-            for (auto const& [key, val] : paramslist) {
-                std::string name = dict::get_key(key);
-                if      (name == "Medge")  Medge = dict::get_val<double>(val);
-                else if (name == "Mscrew") Mscrew = dict::get_val<double>(val);
-                else if (name == "Mglide") Medge = Mscrew = dict::get_val<double>(val);
-                else ExaDiS_fatal("Error: unknown MobilityGlide input parameter %s\n", name.c_str());
-            }
-        }
     };
     
     MobilityGlide(System* system, Params& params)
     {
         if (params.Medge < 0 || params.Mscrew < 0.0)
-            ExaDiS_fatal("Error: invalid or missing MobilityGlide input parameter values\n");
+            ExaDiS_fatal("Error: invalid MobilityGlide parameter values\n");
         
         Medge  = params.Medge;
         Mscrew = params.Mscrew;
@@ -131,7 +122,10 @@ struct MobilityGlide
                 vi = P * (1.0/LtimesB * fi);
             }
         }
-        
+        if (nodes[i].constraint == SURFACE_NODE && system->inclusion_enabled) {
+            Vec3 n = system->inclusion_surface_normal(nodes[i].pos);
+            vi = vi - dot(vi, n) * n;
+        }
         return vi;
     }
     
@@ -143,7 +137,5 @@ namespace MobilityType {
 }
 
 } // namespace ExaDiS
-
-EXADIS_MOBILITY(MobilityGlide, GLIDE)
 
 #endif

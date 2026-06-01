@@ -11,11 +11,6 @@
 #ifndef EXADIS_FORCE_H
 #define EXADIS_FORCE_H
 
-// Used to register force class and alias
-#ifndef EXADIS_FORCE
-#define EXADIS_FORCE(Type, Alias)
-#endif
-
 #include "system.h"
 
 namespace ExaDiS {
@@ -472,8 +467,14 @@ public:
 } // namespace ExaDiS
 
 
-// Base force types
+// Available force types
 #include "force_common.h"
+#include "force_iso.h"
+#include "force_core.h"
+#include "force_lt.h"
+#include "force_n2.h"
+#include "force_segseglist.h"
+#include "force_fft.h"
 #include "force_global.h"
 
 #endif

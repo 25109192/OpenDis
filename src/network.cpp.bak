@@ -124,10 +124,6 @@ int SerialDisNet::split_seg(int i, const Vec3& pos, bool update_conn)
     if (oprec)
         oprec->add_op(OpRec::SplitSeg(nodes[n1].tag, nodes[n2].tag, pos, nodes[nnew].tag));
     
-    // ★ 诊断:记录新节点的产生(只打印不改逻辑)
-    ExaDiS_log("[NODE_ADD] split_seg new_node=%d pos=(%.0f,%.0f,%.0f) constraint=%d total_nodes=%d\n",
-               nnew, pos.x, pos.y, pos.z, nodes[nnew].constraint, (int)nodes.size());
-    
     return nnew;
 }
 
@@ -206,10 +202,9 @@ int SerialDisNet::split_node(int i, std::vector<int>& arms)
  *-------------------------------------------------------------------------*/
 bool SerialDisNet::merge_nodes_position(int n1, int n2, const Vec3& pos, Mat33& dEp)
 {
-// 拒绝真 PIN(FR 源端点)和 SURFACE_NODE(死码)的合并
-    // 注意:INCLUSION_NODE(夹杂表面节点)允许合并,自动通过此判断
-    if (nodes[n1].constraint == PINNED_NODE || nodes[n1].constraint == SURFACE_NODE 
-        || nodes[n2].constraint == PINNED_NODE || nodes[n2].constraint == SURFACE_NODE) {
+    // 如果任一节点被 PINNED_NODE（固定）则不合并
+    if (nodes[n1].constraint == PINNED_NODE || nodes[n1].constraint == SURFACE_NODE || nodes[n2].constraint == PINNED_NODE || nodes[n2].constraint == SURFACE_NODE) {
+       // ExaDiS_log("[merge_nodes_position] SKIP merge: one of nodes is PINNED (n1=%d n2=%d)\n", n1, n2);
         return false;
     }
 
@@ -364,7 +359,7 @@ void SerialDisNet::remove_nodes(std::vector<int> nodelist)
                 remlinks.push_back(conn[nodelist[i]].seg[j]);
             }
             printf(" Warning: removing %d connections for node %d\n",
-                conn[nodelist[i]].num, nodelist[i]);
+                   conn[i].num, nodelist[i]);
         }
     }
 

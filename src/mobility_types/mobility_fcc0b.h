@@ -39,26 +39,15 @@ struct MobilityFCC0b
     double vmax, vscale;
     
     struct Params {
-        double Medge = -1.0, Mscrew = -1.0, Mclimb = -1.0, Mclimbjunc = -1.0;
-        double vmax = -1.0;
-        Params() = default;
+        double Medge, Mscrew, Mclimb, Mclimbjunc;
+        double vmax;
+        Params() { Medge = Mscrew = Mclimb = Mclimbjunc = vmax = -1.0; }
         Params(double _Medge, double _Mscrew, double _Mclimb, double _Mclimbjunc=-1.0, double _vmax=-1.0) {
             Medge = _Medge;
             Mscrew = _Mscrew;
             Mclimb = _Mclimb;
             Mclimbjunc = _Mclimbjunc;
             vmax = _vmax;
-        }
-        Params(Dict paramslist) {
-            for (auto const& [key, val] : paramslist) {
-                std::string name = dict::get_key(key);
-                if      (name == "Medge") Medge = dict::get_val<double>(val);
-                else if (name == "Mscrew") Mscrew = dict::get_val<double>(val);
-                else if (name == "Mclimb") Mclimb = dict::get_val<double>(val);
-                else if (name == "Mclimbjunc") Mclimbjunc = dict::get_val<double>(val);
-                else if (name == "vmax") vmax = dict::get_val<double>(val);
-                else ExaDiS_fatal("Error: unknown MobilityFCC0b input parameter %s\n", name.c_str());
-            }
         }
     };
     
@@ -71,7 +60,7 @@ struct MobilityFCC0b
             ExaDiS_fatal("Error: MobilityFCC0b requires the use of glide planes\n");
         
         if (params.Medge < 0 || params.Mscrew < 0.0 || params.Mclimb < 0.0)
-            ExaDiS_fatal("Error: invalid or missing MobilityFCC0b input parameter values\n");
+            ExaDiS_fatal("Error: invalid MobilityFCC0b() parameter values\n");
         
         Bedge    = 1.0 / params.Medge;
         Bscrew   = 1.0 / params.Mscrew;
@@ -296,7 +285,10 @@ struct MobilityFCC0b
                     apply_velocity_cap(vmax, vscale, vi);
             }
         }
-        
+        if (nodes[i].constraint == SURFACE_NODE && system->inclusion_enabled) {
+            Vec3 n = system->inclusion_surface_normal(nodes[i].pos);
+            vi = vi - dot(vi, n) * n;
+        }
         return vi;
     }
     
@@ -308,7 +300,5 @@ namespace MobilityType {
 }
 
 } // namespace ExaDiS
-
-EXADIS_MOBILITY(MobilityFCC0b, FCC_0B)
 
 #endif

@@ -20,7 +20,7 @@ namespace ExaDiS {
 class OpRec; // forward declaration
     
 enum {FREE_BOUND, PBC_BOUND};
-enum NodeConstraints {UNCONSTRAINED = 0, PINNED_NODE = 7, CORNER_NODE = 1};
+enum NodeConstraints {UNCONSTRAINED = 0, PINNED_NODE = 7, CORNER_NODE = 1, SURFACE_NODE = 8, INCLUSION_NODE = 9};
 
 /*---------------------------------------------------------------------------
  *
@@ -455,12 +455,7 @@ public:
         refresh_tags();
     }
     
-    struct DisLinks {
-        int number_of_links = 0;
-        std::vector<std::vector<int>> links_segs, links_nodes;
-        std::vector<int> segs_link;
-    };
-    DisLinks physical_links();
+    std::vector<std::vector<int> > physical_links();
     
     double dislocation_density(double burgmag);
     void write_data(std::string filename);

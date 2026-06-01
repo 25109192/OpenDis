@@ -1647,7 +1647,11 @@ void CollisionRetroactive::retroactive_collision(System* system)
     }
     
     delete neighbor;
-    
+    // ★ 奥罗万环识别：合并完成后，检测是否形成了包裹夹杂的封闭位错环
+// 封闭环的特征：所有节点都是PINNED_NODE，且它们相互连接形成环
+if (system->inclusion_enabled && nmerge > 0) {
+    system->detect_orowan_loop(network); // 新增函数（可选，用于统计）
+}
   
     // Now we have to loop for collisions on hinge joints (i.e zipping)
     for (int i = 0; i < nnodes; i++) {
@@ -1868,7 +1872,7 @@ void CollisionRetroactive::retroactive_collision_parallel(System* system)
     NeighborList* d_neilist = neilist;
     
     // Look for collisions between segments
-    int max_collisions = 2 * net->Nsegs_local;
+    int max_collisions = 10 * net->Nsegs_local;
     Kokkos::View<int, T_memory_shared> ncollisions("ncollisions");
     Kokkos::View<int**, T_memory_shared> collisions("collisions", max_collisions, 2);
     Kokkos::View<double**, T_memory_shared> Lcollisions("Lcollisions", max_collisions, 2);
@@ -2094,7 +2098,20 @@ void CollisionRetroactive::retroactive_collision_parallel(System* system)
         //check_node_plane_violation(network, conn, mergenode2, "before merge collision");
         
         // Merge nodes
-        bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
+        // 在第9292行 merge_nodes_position 之前插入：
+
+// 奥罗万保护：两个固定节点之间不合并
+bool mn1_fixed = (network->nodes[mergenode1].constraint == PINNED_NODE);
+bool mn2_fixed = (network->nodes[mergenode2].constraint == PINNED_NODE);
+if (mn1_fixed && mn2_fixed) continue;
+if (mn1_fixed) {
+    newpos = network->nodes[mergenode1].pos;
+} else if (mn2_fixed) {
+    newpos = network->nodes[mergenode2].pos;
+}
+
+bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
+        // merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
         nmerge++;
         
         // Attempt to fix glide plane violations that may have been

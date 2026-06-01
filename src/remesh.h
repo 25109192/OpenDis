@@ -71,16 +71,19 @@ public:
             Vec3 rmid = 0.5*(r1+r2);
             
             if (length > maxseg) {
-                // Do not refine segments between pinned nodes
-                if (network->nodes[n1].constraint == PINNED_NODE &&
-                    network->nodes[n2].constraint == PINNED_NODE) continue;
-                
+                // Do not refine segments between pinned/surface nodes
+                if ((network->nodes[n1].constraint == SURFACE_NODE ||
+                    network->nodes[n1].constraint == PINNED_NODE) &&
+                    (network->nodes[n2].constraint == SURFACE_NODE ||
+                    network->nodes[n2].constraint == PINNED_NODE)) continue;
                 // Bisect the segment (refine)
                 int nnew = network->split_seg(i, network->cell.pbc_fold(rmid));
                 nadd++;
                 //check_node_plane_violation(network, conn, nnew, "after remesh split_link");
                 
             } else if (length < minseg && params.coarsen_mode == 0) {
+                    if (network->nodes[n1].constraint == SURFACE_NODE ||
+                        network->nodes[n2].constraint == SURFACE_NODE) continue;
                 // Merge segment nodes (coarsen)
                 if (system->crystal.enforce_glide_planes) {
                     // Do not remesh if node arms are on different planes
@@ -134,7 +137,7 @@ public:
             int nnodes = network->number_of_nodes();
             for (int i = 0; i < nnodes; i++) {
                 if (network->conn[i].num != 2) continue;
-                if (network->nodes[i].constraint == PINNED_NODE ||
+                if (network->nodes[i].constraint == PINNED_NODE || network->nodes[i].constraint == SURFACE_NODE ||
                     network->nodes[i].constraint == CORNER_NODE) continue;
                 
                 Vec3 ri = network->nodes[i].pos;
@@ -195,27 +198,34 @@ public:
         double a = system->params.a;
         
         // Parse the network into its physical links
-        SerialDisNet::DisLinks links = network->physical_links();
+        std::vector<std::vector<int> > links = network->physical_links();
         
         // Loop through the links and remove loops that have 4 or
         // less nodes and whose length is less than some criterion
         double minlength = fmax(fmax(1.5*minseg, 2.0*rann), 2.0*a);
         
         int nrem = 0;
-        for (int i = 0; i < links.number_of_links; i++) {
-            if (links.links_segs[i].size() <= 1 || links.links_segs[i].size() > 4) continue;
+        for (int i = 0; i < links.size(); i++) {
+            if (links[i].size() <= 1 || links[i].size() > 4) continue;
             double length = 0.0;
-            for (int j = 0; j < links.links_segs[i].size(); j++)
-                length += network->seg_length(links.links_segs[i][j]);
+            for (int j = 0; j < links[i].size(); j++)
+                length += network->seg_length(links[i][j]);
             if (length > minlength) continue;
             
             // Make sure it is a loop
-            int n1 = links.links_nodes[i].front();
-            int n2 = links.links_nodes[i].back();
+            int s1 = links[i][0];
+            int n11 = network->segs[s1].n1;
+            int n12 = network->segs[s1].n2;
+            int n1 = (!network->discretization_node(n11)) ? n11 : n12;
+            int s2 = links[i][links[i].size()-1];
+            int n21 = network->segs[s2].n1;
+            int n22 = network->segs[s2].n2;
+            int n2 = (!network->discretization_node(n21)) ? n21 : n22;
+                
             if (n1 == n2) {
                 // Zero-out Burgers vectors to remove the loop
-                for (int j = 0; j < links.links_segs[i].size(); j++)
-                    network->segs[links.links_segs[i][j]].burg = Vec3(0.0);
+                for (int j = 0; j < links[i].size(); j++)
+                    network->segs[links[i][j]].burg = Vec3(0.0);
                 nrem++;
             }
         }

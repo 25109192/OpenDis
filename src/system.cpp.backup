@@ -1,0 +1,739 @@
+/*---------------------------------------------------------------------------
+ *
+ *	ExaDiS
+ *
+ *	Nicolas Bertin
+ *	bertin1@llnl.gov
+ *
+ *-------------------------------------------------------------------------*/
+
+#include "system.h"
+
+namespace ExaDiS {
+
+FILE* flog = nullptr;
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::System()
+ *
+ *-------------------------------------------------------------------------*/
+System::System()
+{
+#ifdef MPI
+    MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+    MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
+#else
+    num_ranks = 1;
+    proc_rank = 0;
+#endif
+    net_mngr = nullptr;
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::initialize()
+ *
+ *-------------------------------------------------------------------------*/
+void System::initialize(Params _params, Crystal _crystal, SerialDisNet *network)
+{
+    // 读取夹杂参数
+    double inclusion_a_phys = 0.0;
+    const char* a_str = std::getenv("INCLUSION_A");
+    if (a_str != nullptr) {
+        inclusion_a_phys = std::stod(a_str);
+        if (inclusion_a_phys > 0.0) inclusion_enabled = true;
+    }
+
+    double vol_frac = 0.10;
+    const char* vol_str = std::getenv("INCLUSION_VOL_FRAC");
+    if (vol_str != nullptr) {
+        vol_frac = std::stod(vol_str);
+        if (vol_frac <= 0.0 || vol_frac > 1.0) {
+            ExaDiS_log("Warning: INCLUSION_VOL_FRAC=%f out of range, using 0.10\n", vol_frac);
+            vol_frac = 0.10;
+        }
+    }
+
+    params = _params;
+    crystal = _crystal;
+
+#ifdef MPI
+    ExaDiS_fatal("System::initialize not implemented for MPI\n");
+#endif
+
+    if (!network)
+        ExaDiS_fatal("Error: undefined initial dislocation configuration\n");
+
+    net_mngr = make_network_manager(network);
+
+    // 初始化夹杂阵列（只初始化一次）
+    if (inclusion_enabled && !inclusion_initialized) {
+
+        inclusion_a_dim = inclusion_a_phys / params.burgmag;
+
+        double Lx_dim = network->cell.H.xx();
+        double Ly_dim = network->cell.H.yy();
+        double Lz_dim = network->cell.H.zz();
+
+        // 根据夹杂边长和体积分数自适应计算阵列数量
+        double box_vol = Lx_dim * Ly_dim * Lz_dim;
+        double inclusion_vol = inclusion_a_dim * inclusion_a_dim * inclusion_a_dim;
+        int N_total = (int)round(vol_frac * box_vol / inclusion_vol);
+        int Nx = (int)round(pow((double)N_total, 1.0/3.0));
+        if (Nx < 1) Nx = 1;
+        int Ny = Nx, Nz = Nx;
+
+        double dx = Lx_dim / Nx;
+        double dy = Ly_dim / Ny;
+        double dz = Lz_dim / Nz;
+
+        if (inclusion_a_dim > dx || inclusion_a_dim > dy || inclusion_a_dim > dz) {
+            ExaDiS_log("Warning: inclusion size may cause overlap! a_dim=%.2f, dx=%.2f, dy=%.2f, dz=%.2f\n",
+                       inclusion_a_dim, dx, dy, dz);
+        }
+
+        inclusion_centers.clear();
+        for (int i = 0; i < Nx; ++i) {
+            double cx = dx * (i + 0.5);
+            for (int j = 0; j < Ny; ++j) {
+                double cy = dy * (j + 0.5);
+                for (int k = 0; k < Nz; ++k) {
+                    double cz = dz * (k + 0.5);
+                    inclusion_centers.push_back(Vec3(cx, cy, cz));
+                }
+            }
+        }
+        inclusion_centers_valid = true;
+
+        ExaDiS_log("Inclusion array: %d x %d x %d = %d inclusions, a_dim=%.2f, vol_frac=%.2f\n",
+                   Nx, Ny, Nz, (int)inclusion_centers.size(), inclusion_a_dim, vol_frac);
+        for (size_t idx = 0; idx < std::min(10, (int)inclusion_centers.size()); ++idx) {
+            ExaDiS_log("  Inclusion %zu: center=(%.2f, %.2f, %.2f)\n",
+                       idx, inclusion_centers[idx].x, inclusion_centers[idx].y, inclusion_centers[idx].z);
+        }
+
+        inclusion_initialized = true;
+    }
+
+    reset_glide_planes();
+    update_inclusion_constraints(network);
+
+    neighbor_cutoff = 0.0;
+    extstress.zero();
+    dEp.zero();
+    dWp.zero();
+    realdt = 0.0;
+    density = network->dislocation_density(params.burgmag);
+
+    oprec = new OpRec();
+    network->oprec = oprec;
+
+    for (int i = 0; i < TIMER_END; i++)
+        timer[i].accumtime = 0.0;
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::~System()
+ *
+ *-------------------------------------------------------------------------*/
+System::~System()
+{
+    exadis_delete(net_mngr);
+    if (oprec) delete oprec;
+    if (flog) fclose(flog);
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::register_neighbor_cutoff()
+ *
+ *-------------------------------------------------------------------------*/
+void System::register_neighbor_cutoff(double cutoff)
+{
+    if (cutoff > neighbor_cutoff)
+        neighbor_cutoff = cutoff;
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::plastic_strain()
+ *
+ *-------------------------------------------------------------------------*/
+template <class N>
+class PlasticStrain {
+private:
+    System* system;
+    N* net;
+    double vol, bmag;
+public:
+    PlasticStrain(System* _system, N* _net) : system(_system), net(_net)
+    {
+        vol = net->cell.volume();
+        bmag = system->params.burgmag;
+        system->dEp.zero();
+        system->dWp.zero();
+        system->density = 0.0;
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    void operator() (const team_handle& team) const
+    {
+        int ts = team.team_size();
+        int lid = team.league_rank();
+
+        auto nodes = net->get_nodes();
+        auto segs = net->get_segs();
+        auto cell = net->cell;
+
+        Mat33 E, W;
+        double rho;
+        Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ts),
+        [=](int& t, Mat33& Esum, Mat33& Wsum, double& rhosum) {
+            int i = lid*ts + t;
+            if (i < net->Nsegs_local) {
+                int n1 = segs[i].n1;
+                int n2 = segs[i].n2;
+                Vec3 b = segs[i].burg;
+
+                Vec3 r1 = nodes[n1].pos;
+                Vec3 r2 = cell.pbc_position(r1, nodes[n2].pos);
+                Vec3 r3 = cell.pbc_position(r1, system->xold(n1));
+                Vec3 r4 = cell.pbc_position(r3, system->xold(n2));
+                Vec3 n = 0.5*cross(r2-r3, r1-r4);
+
+                Mat33 P = 1.0/vol * outer(n, b);
+                Esum += 0.5 * (P + P.transpose());
+                Wsum += 0.5 * (P - P.transpose());
+                rhosum += 1.0/vol/bmag/bmag * (r2-r1).norm();
+            }
+        }, E, W, rho);
+
+        Kokkos::single(Kokkos::PerTeam(team), [=]() {
+            Kokkos::atomic_add(&system->dEp, E);
+            Kokkos::atomic_add(&system->dWp, W);
+            Kokkos::atomic_add(&system->density, rho);
+        });
+    }
+};
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::is_node_in_inclusion()
+ *
+ *-------------------------------------------------------------------------*/
+bool System::is_node_in_inclusion(const Vec3& pos) const {
+    if (!inclusion_enabled) return false;
+    double half = inclusion_a_dim * 0.5;
+    double tol = 1e-6 * inclusion_a_dim;
+    for (const auto& center : inclusion_centers) {
+        if (pos.x >= center.x - half + tol && pos.x <= center.x + half - tol &&
+            pos.y >= center.y - half + tol && pos.y <= center.y + half - tol &&
+            pos.z >= center.z - half + tol && pos.z <= center.z + half - tol) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::is_node_strictly_inside_inclusion()
+ *
+ *-------------------------------------------------------------------------*/
+bool System::is_node_strictly_inside_inclusion(const Vec3& pos) const {
+    if (!inclusion_enabled) return false;
+    double half = inclusion_a_dim * 0.5;
+    double tol = 1e-3 * inclusion_a_dim;
+    for (const auto& center : inclusion_centers) {
+        if (pos.x > center.x - half + tol &&
+            pos.x < center.x + half - tol &&
+            pos.y > center.y - half + tol &&
+            pos.y < center.y + half - tol &&
+            pos.z > center.z - half + tol &&
+            pos.z < center.z + half - tol) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void System::plastic_strain()
+{
+    DeviceDisNet* net = get_device_network();
+    TeamSize ts = get_team_sizes(net->Nsegs_local);
+    Kokkos::parallel_for(Kokkos::TeamPolicy<>(ts.num_teams, ts.team_size),
+        PlasticStrain<DeviceDisNet>(this, net)
+    );
+    Kokkos::fence();
+
+    if (oprec)
+        oprec->add_op(OpRec::PlasticStrain(dEp, dWp, density));
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::update_inclusion_constraints()
+ *
+ *-------------------------------------------------------------------------*/
+void System::update_inclusion_constraints(SerialDisNet* network) {
+    if (!inclusion_enabled) return;
+    if (network == nullptr) return;
+
+    int nnodes = network->number_of_nodes();
+    static int total_fixed_count = 0;
+    int new_fixed = 0;
+
+    for (int i = 0; i < nnodes; ++i) {
+        if (network->nodes[i].constraint == PINNED_NODE) continue;
+        if (is_node_in_inclusion(network->nodes[i].pos)) {
+            network->nodes[i].constraint = PINNED_NODE;
+            network->nodes[i].v = Vec3(0.0);
+            new_fixed++;
+        }
+    }
+    if (new_fixed > 0) {
+        total_fixed_count += new_fixed;
+        ExaDiS_log("Step: new fixed nodes = %d, total fixed = %d\n", new_fixed, total_fixed_count);
+    }
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::seg_cube_intersect()
+ *
+ *-------------------------------------------------------------------------*/
+bool System::seg_cube_intersect(const Vec3& p_out, const Vec3& p_in,
+                                 const Vec3& center, double half, Vec3& hit) const
+{
+    Vec3 d = p_in - p_out;
+    double tmin = 0.0, tmax = 1.0;
+
+    for (int k = 0; k < 3; ++k) {
+        double lo = center[k] - half;
+        double hi = center[k] + half;
+        if (fabs(d[k]) < 1e-14) {
+            if (p_out[k] < lo || p_out[k] > hi) return false;
+        } else {
+            double t1 = (lo - p_out[k]) / d[k];
+            double t2 = (hi - p_out[k]) / d[k];
+            if (t1 > t2) std::swap(t1, t2);
+            tmin = std::max(tmin, t1);
+            tmax = std::min(tmax, t2);
+            if (tmin > tmax) return false;
+        }
+    }
+
+    hit = p_out + tmin * d;
+
+    // 棱角吸附
+    double edge_tol = 0.1 * half;
+    Vec3 local = hit - center;
+    int near_face_count = 0;
+    for (int k = 0; k < 3; ++k) {
+        if (fabs(fabs(local[k]) - half) < edge_tol)
+            near_face_count++;
+    }
+    if (near_face_count >= 2) {
+        double min_dist = 1e30;
+        int main_face = 0;
+        for (int k = 0; k < 3; ++k) {
+            double dist = fabs(fabs(local[k]) - half);
+            if (dist < min_dist) {
+                min_dist = dist;
+                main_face = k;
+            }
+        }
+        for (int k = 0; k < 3; ++k) {
+            if (k == main_face) continue;
+            if (local[k] > half) local[k] = half;
+            else if (local[k] < -half) local[k] = -half;
+            else if (fabs(local[k]) > half - edge_tol)
+                local[k] = (local[k] > 0 ? 1.0 : -1.0) * half;
+        }
+        hit = center + local;
+    }
+    return true;
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::insert_surface_nodes()
+ *
+ *-------------------------------------------------------------------------*/
+void System::insert_surface_nodes(SerialDisNet* network)
+{
+    if (!inclusion_enabled) return;
+
+    double half = inclusion_a_dim * 0.5;
+
+    // ============================================================
+    // 第一阶段：找跨越线段，在表面插入PINNED_NODE
+    // ============================================================
+    std::vector<std::pair<int, Vec3>> to_split;
+
+    int nsegs = network->number_of_segs();
+    for (int i = 0; i < nsegs; i++) {
+        int n1 = network->segs[i].n1;
+        int n2 = network->segs[i].n2;
+        Vec3 p1 = network->nodes[n1].pos;
+        Vec3 p2 = network->cell.pbc_position(p1, network->nodes[n2].pos);
+
+        bool p1_in = is_node_in_inclusion(p1);
+        bool p2_in = is_node_in_inclusion(p2);
+        if (p1_in == p2_in) continue;
+
+        Vec3 p_out = p1_in ? p2 : p1;
+        Vec3 p_in  = p1_in ? p1 : p2;
+
+        double min_dist = 1e30;
+        Vec3 best_hit;
+        bool found = false;
+        for (const auto& center : inclusion_centers) {
+            Vec3 hit;
+            if (seg_cube_intersect(p_out, p_in, center, half, hit)) {
+                double dist = (hit - p_out).norm();
+                if (dist < min_dist) {
+                    min_dist = dist;
+                    best_hit = hit;
+                    found = true;
+                }
+            }
+        }
+        if (found) {
+            to_split.push_back({i, best_hit});
+        }
+    }
+
+    if (to_split.empty()) return;
+
+    std::sort(to_split.begin(), to_split.end(),
+              [](const auto& a, const auto& b){ return a.first > b.first; });
+
+    int new_surface_nodes = 0;
+    for (auto& [seg_id, hit_pos] : to_split) {
+        if (seg_id >= network->number_of_segs()) continue;
+
+        bool already_pinned = false;
+        double tol2 = (0.05 * inclusion_a_dim) * (0.05 * inclusion_a_dim);
+        int n1 = network->segs[seg_id].n1;
+        int n2 = network->segs[seg_id].n2;
+        if ((network->nodes[n1].pos - hit_pos).norm2() < tol2 &&
+            network->nodes[n1].constraint == PINNED_NODE) already_pinned = true;
+        if ((network->nodes[n2].pos - hit_pos).norm2() < tol2 &&
+            network->nodes[n2].constraint == PINNED_NODE) already_pinned = true;
+        if (already_pinned) continue;
+
+        int new_node = network->split_seg(seg_id, hit_pos);
+        if (new_node < 0) continue;
+
+        network->nodes[new_node].constraint = PINNED_NODE;
+        network->nodes[new_node].v = Vec3(0.0);
+        new_surface_nodes++;
+    }
+
+    if (new_surface_nodes == 0) return;
+    network->update();
+
+    // ============================================================
+    // 第二阶段：递归删除内部节点，重新连接外侧节点
+    // ============================================================
+    bool did_something = true;
+    while (did_something) {
+        did_something = false;
+
+        network->generate_connectivity();
+
+        // 找第一个内部节点（每次只处理一个）
+        int ci = -1;
+        for (int i = 0; i < network->number_of_nodes(); i++) {
+            if (network->nodes[i].constraint == PINNED_NODE) continue;
+            if (is_node_in_inclusion(network->nodes[i].pos)) {
+                ci = i;
+                break;
+            }
+        }
+
+        if (ci < 0) break;
+        did_something = true;
+
+        // 找这个内部节点连接的外侧节点
+        std::vector<int> outer_neighbors;
+        std::vector<Vec3> outer_burgs;
+        std::vector<Vec3> outer_planes;
+
+        for (int j = 0; j < network->conn[ci].num; j++) {
+            int neighbor = network->conn[ci].node[j];
+            int seg_id   = network->conn[ci].seg[j];
+            int order    = network->conn[ci].order[j];
+
+            bool neighbor_is_inner = (network->nodes[neighbor].constraint != PINNED_NODE)
+                                     && is_node_in_inclusion(network->nodes[neighbor].pos);
+            if (!neighbor_is_inner) {
+                outer_neighbors.push_back(neighbor);
+                outer_burgs.push_back(order * network->segs[seg_id].burg);
+                outer_planes.push_back(network->segs[seg_id].plane);
+            }
+        }
+
+        // 删除这一个内部节点
+        network->remove_nodes({ci});
+        network->update();
+        network->generate_connectivity();
+
+        // 如果有两个外侧节点，重新连接
+        if (outer_neighbors.size() == 2) {
+            int na = outer_neighbors[0];
+            int nb = outer_neighbors[1];
+
+        if (na < network->number_of_nodes() &&
+            nb < network->number_of_nodes() &&
+            network->find_connection(na, nb) < 0) {
+            network->add_seg(na, nb, outer_burgs[1], outer_planes[1]);
+            network->update();
+        }
+        }
+    }
+
+    ExaDiS_log("Orowan: inserted %d surface nodes on inclusion\n", new_surface_nodes);
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::reset_glide_planes()
+ *
+ *-------------------------------------------------------------------------*/
+void System::reset_glide_planes()
+{
+    if (!crystal.use_glide_planes) return;
+
+    DeviceDisNet* net = get_device_network();
+
+    int err = 0;
+    Kokkos::parallel_reduce(net->Nsegs_local, KOKKOS_LAMBDA(const int& i, int& err) {
+        auto segs = net->get_segs();
+        if (segs[i].plane.norm2() < 1e-10) err += 1;
+    }, err);
+    Kokkos::fence();
+    if (err > 0)
+        ExaDiS_fatal("Error: %d segments have no glide plane assigned\n", err);
+
+    if (!crystal.enforce_glide_planes) return;
+
+    bool use_oprec = (oprec);
+    if (use_oprec) use_oprec = oprec->record;
+    Kokkos::DualView<int*> flag;
+    Kokkos::DualView<Vec3*> val;
+    Kokkos::DualView<NodeTag*[2]> tags;
+    if (use_oprec) {
+        int N_local = MAX(net->Nnodes_local, net->Nsegs_local);
+        flag = Kokkos::DualView<int*>("flag", N_local);
+        val = Kokkos::DualView<Vec3*>("val", N_local);
+        tags = Kokkos::DualView<NodeTag*[2]>("tags", N_local);
+    }
+
+    if (xold.extent(0) > 0) {
+        T_x& xprev = xold;
+        if (use_oprec) Kokkos::deep_copy(flag.d_view, 0);
+        Kokkos::parallel_for(net->Nnodes_local, KOKKOS_LAMBDA(const int& i) {
+            auto nodes = net->get_nodes();
+            if (nodes[i].constraint == PINNED_NODE || nodes[i].constraint == SURFACE_NODE) return;
+            auto segs = net->get_segs();
+            auto conn = net->get_conn();
+            auto cell = net->cell;
+
+            int numplanes = 0;
+            Vec3 planes[MAX_CONN];
+            for (int j = 0; j < conn[i].num; j++) {
+                int s = conn[i].seg[j];
+                Vec3 p = segs[s].plane;
+                if (j == 0) {
+                    planes[0] = p;
+                    numplanes = 1;
+                } else {
+                    for (int k = 0; k < numplanes; k++)
+                        p = p.orthogonalize(planes[k]);
+                    if (p.norm2() > 1e-5)
+                        planes[numplanes++] = p.normalized();
+                }
+            }
+
+            Vec3 pold = xprev(i);
+            Vec3 pcur = nodes[i].pos;
+            Vec3 p = cell.pbc_position(xprev(i), pcur);
+            if (numplanes == 1) {
+                double eqn = dot(planes[0], p) - dot(planes[0], pold);
+                p -= eqn * planes[0];
+            } else if (numplanes == 2) {
+                Vec3 l = cross(planes[0], planes[1]).normalized();
+                Vec3 dr = p - pold;
+                p = pold + dot(l, dr) * l;
+            } else {
+                p = pold;
+            }
+            if ((p-pcur).norm2() > 1e-5) {
+                p = cell.pbc_fold(p);
+                nodes[i].pos = p;
+                if (use_oprec) {
+                    flag.d_view(i) = 1;
+                    val.d_view(i) = p;
+                    tags.d_view(i,0) = nodes[i].tag;
+                }
+            }
+        });
+        Kokkos::fence();
+
+        if (use_oprec) {
+            Kokkos::deep_copy(flag.h_view, flag.d_view);
+            Kokkos::deep_copy(val.h_view, val.d_view);
+            Kokkos::deep_copy(tags.h_view, tags.d_view);
+            for (int i = 0; i < net->Nnodes_local; i++) {
+                if (!flag.h_view(i)) continue;
+                oprec->add_op(OpRec::MoveNode(tags.h_view(i,0), val.h_view(i)));
+            }
+        }
+    }
+
+    Crystal* cryst = &crystal;
+    if (use_oprec) Kokkos::deep_copy(flag.d_view, 0);
+    Kokkos::parallel_for(net->Nsegs_local, KOKKOS_LAMBDA(const int& i) {
+        auto nodes = net->get_nodes();
+        auto segs = net->get_segs();
+        Vec3 pold = segs[i].plane;
+        Vec3 pnew = cryst->find_seg_glide_plane(net, i);
+        if (pnew.norm2() > 1e-5 && (pnew-pold).norm2() > 1e-5) {
+            segs[i].plane = pnew;
+            if (use_oprec) {
+                flag.d_view(i) = 1;
+                val.d_view(i) = pnew;
+                tags.d_view(i,0) = nodes[segs[i].n1].tag;
+                tags.d_view(i,1) = nodes[segs[i].n2].tag;
+            }
+        }
+    });
+    Kokkos::fence();
+
+    if (use_oprec) {
+        Kokkos::deep_copy(flag.h_view, flag.d_view);
+        Kokkos::deep_copy(val.h_view, val.d_view);
+        Kokkos::deep_copy(tags.h_view, tags.d_view);
+        for (int i = 0; i < net->Nsegs_local; i++) {
+            if (!flag.h_view(i)) continue;
+            oprec->add_op(OpRec::UpdateSegPlane(tags.h_view(i,0), tags.h_view(i,1), val.h_view(i)));
+        }
+    }
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::write_config()
+ *
+ *-------------------------------------------------------------------------*/
+void System::write_config(std::string filename)
+{
+#ifdef MPI
+    ExaDiS_fatal("System::write_config not implemented for MPI\n");
+#endif
+
+    Kokkos::fence();
+    timer[TIMER_OUTPUT].start();
+
+    int active_net = net_mngr->get_active();
+    SerialDisNet *network = get_serial_network();
+    network->write_data(filename);
+
+    net_mngr->set_active(active_net);
+
+    Kokkos::fence();
+    timer[TIMER_OUTPUT].stop();
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::print_timers()
+ *
+ *-------------------------------------------------------------------------*/
+void System::print_timers(double timetot, bool dev)
+{
+    if (timetot < 0.0) {
+        timetot = 0.0;
+        for (int i = 0; i < TIMER_END; i++)
+            timetot += timer[i].accumtime;
+    }
+    double ftime[TIMER_END];
+    for (int i = 0; i < TIMER_END; i++)
+        ftime[i] = (timetot > 0.0) ? timer[i].accumtime/timetot*100.0 : 0.0;
+
+    ExaDiS_log("----------------------------------------------\n");
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Force time:", timer[TIMER_FORCE].accumtime, ftime[TIMER_FORCE]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Mobility time:", timer[TIMER_MOBILITY].accumtime, ftime[TIMER_MOBILITY]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Integration time:", timer[TIMER_INTEGRATION].accumtime, ftime[TIMER_INTEGRATION]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Cross-slip time:", timer[TIMER_CROSSSLIP].accumtime, ftime[TIMER_CROSSSLIP]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Collision time:", timer[TIMER_COLLISION].accumtime, ftime[TIMER_COLLISION]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Topology time:", timer[TIMER_TOPOLOGY].accumtime, ftime[TIMER_TOPOLOGY]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Remesh time:", timer[TIMER_REMESH].accumtime, ftime[TIMER_REMESH]);
+    ExaDiS_log("%-20s %11.3f sec (%.2f%%)\n", "Output time:", timer[TIMER_OUTPUT].accumtime, ftime[TIMER_OUTPUT]);
+    ExaDiS_log("----------------------------------------------\n");
+    if (dev && numdevtimer > 0) {
+        for (int i = 0; i < numdevtimer; i++)
+            ExaDiS_log("%s time: %.3f sec\n", devtimer[i].label.c_str(), devtimer[i].accumtime);
+        ExaDiS_log("----------------------------------------------\n");
+    }
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     make_system()
+ *
+ *-------------------------------------------------------------------------*/
+System* make_system(SerialDisNet* net, Crystal crystal, Params params) {
+    System* system = exadis_new<System>();
+    system->initialize(params, crystal, net);
+    return system;
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     make_network_manager()
+ *
+ *-------------------------------------------------------------------------*/
+DisNetManager* make_network_manager(SerialDisNet* net) {
+    net->generate_connectivity();
+    net->update_ptr();
+    return exadis_new<DisNetManager>(net);
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::same_inclusion_face()
+ *
+ *-------------------------------------------------------------------------*/
+bool System::same_inclusion_face(const Vec3& pos1, const Vec3& pos2) const {
+    if (!inclusion_enabled) return false;
+    double half = inclusion_a_dim * 0.5;
+    double tol = 0.05 * inclusion_a_dim;
+
+    for (const auto& center : inclusion_centers) {
+        bool on1 = (fabs(fabs(pos1.x-center.x)-half) < tol ||
+                    fabs(fabs(pos1.y-center.y)-half) < tol ||
+                    fabs(fabs(pos1.z-center.z)-half) < tol);
+        bool on2 = (fabs(fabs(pos2.x-center.x)-half) < tol ||
+                    fabs(fabs(pos2.y-center.y)-half) < tol ||
+                    fabs(fabs(pos2.z-center.z)-half) < tol);
+        if (!on1 || !on2) continue;
+
+        if (fabs(fabs(pos1.x-center.x)-half) < tol &&
+            fabs(fabs(pos2.x-center.x)-half) < tol &&
+            fabs(pos1.x-pos2.x) < tol) return true;
+        if (fabs(fabs(pos1.y-center.y)-half) < tol &&
+            fabs(fabs(pos2.y-center.y)-half) < tol &&
+            fabs(pos1.y-pos2.y) < tol) return true;
+        if (fabs(fabs(pos1.z-center.z)-half) < tol &&
+            fabs(fabs(pos2.z-center.z)-half) < tol &&
+            fabs(pos1.z-pos2.z) < tol) return true;
+    }
+    return false;
+}
+
+} // namespace ExaDiS

@@ -1,0 +1,14 @@
+# 编译产物
+*.o
+*.so
+*.pyc
+build/
+__pycache__/
+
+# 临时文件
+*.swp
+*.bak
+*.backup
+
+# slurm输出
+slurm-*.out

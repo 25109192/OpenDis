@@ -272,8 +272,6 @@ class CalForce:
                     fparams[key] = pyexadis.Force.SEGSEG_ISO_FFT.Params(**val)
                 elif key in ['FORCE_LONG_FFT_SHORT_ISO', 'FORCE_FFT']:
                     fparams[key] = pyexadis.Force.ForceFFT.Params(**val)
-                elif key in ['FORCE_N2_ISO']:
-                    fparams[key] = pyexadis.Force.BRUTE_FORCE_N2.Params(**val)
                 else:
                     raise ValueError(f"CalForce::GLOBAL_MODEL: unknown force contribution '{key}'")
             self.force = pyexadis.Force.GLOBAL_MODEL.make(params=self.params, fparams=fparams, cell=cell)
@@ -282,7 +280,6 @@ class CalForce:
             raise ValueError('Unknown force %s' % force_mode)
             
     def NodeForce(self, N: DisNetManager, state: dict, pre_compute=True) -> dict:
-        if not "applied_stress" in state: raise KeyError('No applied stress found for force calculation')
         applied_stress = state["applied_stress"]
         G = N.get_disnet(ExaDisNet)
         f = self.force.compute_force(G.net, applied_stress=applied_stress, pre_compute=pre_compute)
@@ -352,19 +349,71 @@ class MobilityLaw:
     def __init__(self, state: dict, mobility_law: str='SimpleGlide', **kwargs) -> None:
         self.mobility_law = mobility_law
         params = get_exadis_params(state)
-        mobparams = kwargs
-
-        # backward compatibility
-        if mobility_law == 'SimpleGlide':
-            mobility_law = 'GLIDE'
-            if not kwargs: mobparams = {"Mglide": 1.0}
-            if "mob" in mobparams: mobparams = {"Mglide": mobparams["mob"]}
-
-        self.mobility = pyexadis.make_mobility(name=mobility_law, params=params, mobparams=mobparams)
+        
+        if self.mobility_law in ['SimpleGlide', 'GLIDE']:
+            Medge = kwargs.get('Medge', -1.0)
+            Mscrew = kwargs.get('Mscrew', -1.0)
+            if Medge > 0.0 and Mscrew > 0.0:
+                mobparams = pyexadis.Mobility_GLIDE_Params(Medge, Mscrew)
+            else:
+                mob = kwargs.get('mob', 1.0)
+                mobparams = pyexadis.Mobility_GLIDE_Params(mob)
+            self.mobility = pyexadis.make_mobility_glide(params=params, mobparams=mobparams)
+            
+        elif self.mobility_law == 'BCC_0B':
+            Medge = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Medge')
+            Mscrew = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Mscrew')
+            Mclimb = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Mclimb')
+            Fedge = kwargs.get('Fedge', 0.0)
+            Fscrew = kwargs.get('Fscrew', 0.0)
+            vmax = kwargs.get('vmax', -1.0)
+            mobparams = pyexadis.Mobility_BCC_0B_Params(Medge, Mscrew, Mclimb, Fedge, Fscrew, vmax)
+            self.mobility = pyexadis.make_mobility_bcc_0b(params=params, mobparams=mobparams)
+            
+        elif self.mobility_law == 'BCC_NL':
+            tempK = kwargs.get('tempK', 300.0)
+            vmax = kwargs.get('vmax', -1.0)
+            Peierls = kwargs.get('Peierls', 1.2e9)
+            Bscrew = kwargs.get('Bscrew', 4.6e-4)
+            B0edge = kwargs.get('B0edge', 0.0)
+            B1edge = kwargs.get('B1edge', 7.7e-7)
+            mobparams = pyexadis.Mobility_BCC_NL_Params(tempK, vmax, Peierls, Bscrew, B0edge, B1edge)
+            self.mobility = pyexadis.make_mobility_bcc_nl(params=params, mobparams=mobparams)
+            
+        elif self.mobility_law == 'FCC_0':
+            Medge = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Medge')
+            Mscrew = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Mscrew')
+            vmax = kwargs.get('vmax', -1.0)
+            mobparams = pyexadis.Mobility_FCC_0_Params(Medge, Mscrew, vmax)
+            self.mobility = pyexadis.make_mobility_fcc_0(params=params, mobparams=mobparams)
+            
+        elif self.mobility_law == 'FCC_0_FRIC':
+            Medge = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Medge')
+            Mscrew = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Mscrew')
+            Fedge = kwargs.get('Fedge', 0.0)
+            Fscrew = kwargs.get('Fscrew', 0.0)
+            vmax = kwargs.get('vmax', -1.0)
+            mobility_field = kwargs.get('mobility_field', "")
+            friction_field = kwargs.get('friction_field', "")
+            Fscale = kwargs.get('Fscale', 1.0)
+            mobparams = pyexadis.Mobility_FCC_0_FRIC_Params(Medge, Mscrew, Fedge, Fscrew, vmax,
+                                                            mobility_field, friction_field, Fscale)
+            self.mobility = pyexadis.make_mobility_fcc_0_fric(params=params, mobparams=mobparams)
+            
+        elif self.mobility_law == 'FCC_0B':
+            Medge = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Medge')
+            Mscrew = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Mscrew')
+            Mclimb = get_module_arg('MobilityLaw::'+self.mobility_law, kwargs, 'Mclimb')
+            Mclimbjunc = kwargs.get('Mclimbjunc', -1.0)
+            vmax = kwargs.get('vmax', -1.0)
+            mobparams = pyexadis.Mobility_FCC_0B_Params(Medge, Mscrew, Mclimb, Mclimbjunc, vmax)
+            self.mobility = pyexadis.make_mobility_fcc_0b(params=params, mobparams=mobparams)
+            
+        else:
+            raise ValueError('Unknown mobility law %s' % mobility_law)
         
     def Mobility(self, N: DisNetManager, state: dict) -> dict:
         G = N.get_disnet(ExaDisNet)
-        if not "nodeforces" in state: raise KeyError('No nodal forces found for mobility calculation')
         f = state["nodeforces"]
         nodetags = state.get("nodeforcetags", np.empty((0,2)))
         if f.size == 0: f, nodetags = np.empty((0,3)), np.empty((0,2))
@@ -511,18 +560,14 @@ class TimeIntegration:
         return state
 
     def Update_EulerForward(self, G: ExaDisNet, state: dict) -> None:
-        if not "nodevels" in state: raise KeyError('No nodal velocities found for time-integration')
         v = state["nodevels"]
         nodetags = state.get("nodeveltags", np.empty((0,2)))
         if v.size == 0: v, nodetags = np.empty((0,3)), np.empty((0,2))
         self.dt = pyexadis.integrate_euler(G.net, params=self.params, dt=self.dt, nodevels=v, nodetags=nodetags)
         
     def Integrate(self, G: ExaDisNet, state: dict) -> None:
-        if not "applied_stress" in state: raise KeyError('No applied stress found for time-integration')
         applied_stress = state["applied_stress"]
-        if not "nodevels" in state: raise KeyError('No nodal velocities found for time-integration')
         v = state["nodevels"]
-        if not "nodeveltags" in state: raise KeyError('No nodal tags found for time-integration')
         nodetags = state["nodeveltags"]
         if v.size == 0: v, nodetags = np.empty((0,3)), np.empty((0,2))
         # update state dictionary if force/mobility are python-based

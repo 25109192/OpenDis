@@ -634,30 +634,68 @@ void ExaDiSApp::step(Control& ctrl)
     
     // Mobility calculation
     mobility->compute(system);
-    
-    // Time-integration
+
+    // ★ 积分前：先清零已固定节点的速度
+   /* if (system->inclusion_enabled) {
+        SerialDisNet* net = system->get_serial_network();
+        int nnodes = net->number_of_nodes();
+        for (int i = 0; i < nnodes; ++i) {
+            if (net->nodes[i].constraint == PINNED_NODE)
+                net->nodes[i].v = Vec3(0.0);
+        }
+    }*/
+
+    // ★ 积分前：把表面节点速度投影到所在面上
+    if (system->inclusion_enabled) {
+        SerialDisNet* net = system->get_serial_network();
+        system->project_surface_node_velocity(net);
+    }
+
+    // 时间积分
     integrator->integrate(system);
+
+    // ★ 积分后：处理穿越边界的线段，插入表面节点
+    if (system->inclusion_enabled) {
+        SerialDisNet* net = system->get_serial_network();
+        system->insert_surface_nodes(net);
+        system->check_surface_node_transition(net);
+        system->update_inclusion_constraints(net);
+        system->enforce_edge_continuity(net);
+        system->correct_surface_node_positions(net);  // ← 新加
+    }
+
     oprec_save_integration(ctrl);
-    
-    // Compute plastic strain
     system->plastic_strain();
-    
-    // Reset glide planes
     system->reset_glide_planes();
-    
-    // Cross-slip
-    if (crossslip)
-        crossslip->handle(system);
-    
-    // Collision
+
+    // ★ reset之后：固定节点并清除幽灵段
+    if (system->inclusion_enabled) {
+        SerialDisNet* net = system->get_serial_network();
+        system->update_inclusion_constraints(net);
+        system->enforce_edge_continuity(net);
+    }
+
+    // Collision（内部调用 purge_network，清除幽灵段）
     collision->handle(system);
-    
+    // 检测奥罗万环（collision之后调用，此时零Burgers段已产生）
+    if (system->inclusion_enabled) {
+        SerialDisNet* net = system->get_serial_network();
+        system->detect_orowan_loop(net);
+    }
     // Topology
     topology->handle(system);
-    
+
     // Remesh
     remesh->remesh(system);
-    
+    // ★ Topology和Remesh之后再处理一次夹杂
+    if (system->inclusion_enabled) {
+        SerialDisNet* net = system->get_serial_network();
+        system->insert_surface_nodes(net);
+        system->check_surface_node_transition(net);
+        system->update_inclusion_constraints(net);
+        system->enforce_edge_continuity(net);
+        system->correct_surface_node_positions(net);
+    }
     // Update stress
     update_mechanics(ctrl);
     

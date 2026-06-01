@@ -27,22 +27,18 @@ struct MobilityFCC0
     double vmax, vscale;
     
     struct Params {
-        double Medge = -1.0, Mscrew = -1.0;
-        double vmax = -1.0;
-        Params() = default;
-        Params(double _Medge, double _Mscrew, double _vmax=-1.0) {
+        double Medge, Mscrew;
+        double vmax;
+        Params() { Medge = Mscrew = vmax = -1.0; }
+        Params(double _Medge, double _Mscrew) {
+            Medge = _Medge;
+            Mscrew = _Mscrew;
+            vmax = -1.0;
+        }
+        Params(double _Medge, double _Mscrew, double _vmax) {
             Medge = _Medge;
             Mscrew = _Mscrew;
             vmax = _vmax;
-        }
-        Params(Dict paramslist) {
-            for (auto const& [key, val] : paramslist) {
-                std::string name = dict::get_key(key);
-                if      (name == "Medge")  Medge  = dict::get_val<double>(val);
-                else if (name == "Mscrew") Mscrew = dict::get_val<double>(val);
-                else if (name == "vmax")   vmax   = dict::get_val<double>(val);
-                else ExaDiS_fatal("Error: unknown MobilityFCC0 input parameter %s\n", name.c_str());
-            }
         }
     };
     
@@ -55,7 +51,7 @@ struct MobilityFCC0
             ExaDiS_fatal("Error: MobilityFCC0 requires the use of glide planes\n");
         
         if (params.Medge < 0 || params.Mscrew < 0.0)
-            ExaDiS_fatal("Error: invalid or missing MobilityFCC0 input parameter values\n");
+            ExaDiS_fatal("Error: invalid MobilityFCC0 parameter values\n");
         
         Medge  = params.Medge;
         Mscrew = params.Mscrew;
@@ -74,8 +70,12 @@ struct MobilityFCC0
         
         Vec3 vi(0.0);
         
+
+        // INCLUSION_NODE 是夹杂表面节点,直接判断类型即可,不需要查 map
+        bool is_surface_pin = (nodes[i].constraint == INCLUSION_NODE);
+        
         int nconn = conn[i].num;
-        if (nconn >= 2 && nodes[i].constraint != PINNED_NODE) {
+        if (nconn >= 2 && (nodes[i].constraint != PINNED_NODE || is_surface_pin)) {
 
             double eps = 1e-10;
             
@@ -158,9 +158,45 @@ struct MobilityFCC0
                 vi = P * (1.0/LtimesB * fi);
                 if (vmax > 0.0) 
                     apply_velocity_cap(vmax, vscale, vi);
+
+                // ★ 晶体学严格化:表面 PIN 节点投影到 "滑移面 ∩ 夹杂表面" 交线方向
+                if (is_surface_pin) {
+                    long long key = (long long)nodes[i].tag.domain * 1000000LL
+                                  + (long long)nodes[i].tag.index;
+                    auto it = system->surface_node_normal.find(key);
+                    if (it != system->surface_node_normal.end()) {
+                        Vec3 n_surface = it->second;
+                        
+                        if (ngc == 1) {
+                            // 单一滑移面:严格投影到交线方向 l
+                            Vec3 n_glide = norm[0];
+                            Vec3 l = cross(n_glide, n_surface);
+                            double l_norm = l.norm();
+                            if (l_norm > 1e-6) {
+                                l = (1.0 / l_norm) * l;
+                                vi = dot(vi, l) * l;
+                            } else {
+                                // 退化:滑移面与夹杂面接近平行,fallback
+                                vi = vi - dot(vi, n_surface) * n_surface;
+                            }
+                        } else {
+                            // ngc >= 2:节点已被多滑移面锁定,fallback 到切平面投影
+                            vi = vi - dot(vi, n_surface) * n_surface;
+                        }
+                        
+                        if (vi.norm2() < 1e-30) vi = Vec3(0.0);
+                    }
+                }
             }
         }
+        // 表面节点（SURFACE_NODE 类型）：速度投影到夹杂表面切平面
+        // 注：当前代码中没有使用 SURFACE_NODE 类型，但保留这段作为兼容
+        if (nodes[i].constraint == SURFACE_NODE && system->inclusion_enabled) {
+            Vec3 n = system->inclusion_surface_normal(nodes[i].pos);
+            vi = vi - dot(vi, n) * n;
+        }
         
+
         return vi;
     }
     
@@ -172,7 +208,5 @@ namespace MobilityType {
 }
 
 } // namespace ExaDiS
-
-EXADIS_MOBILITY(MobilityFCC0, FCC_0)
 
 #endif

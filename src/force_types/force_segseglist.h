@@ -12,8 +12,6 @@
 #define EXADIS_FORCE_SEGSEGLIST_H
 
 #include "force.h"
-#include "force_iso.h"
-#include "force_lt.h"
 #include "neighbor.h"
 #include "functions.h"
 
@@ -663,8 +661,6 @@ namespace ForceType {
     typedef ForceSegSegList<SegSegIso> FORCE_SEGSEG_ISO;
     typedef ForceCollection2<CORE_SELF_PKEXT,FORCE_SEGSEG_ISO> CUTOFF_MODEL;
 }
-
-EXADIS_FORCE(ForceType::FORCE_SEGSEG_ISO, FORCE_SEGSEG_ISO)
 
 } // namespace ExaDiS
 
