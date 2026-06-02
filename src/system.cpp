@@ -679,15 +679,15 @@ void System::check_surface_node_transition(SerialDisNet* network)
         Vec3 center = inclusion_centers[incl_id];
 
         Vec3 old_normal = it_normal->second;
-        Vec3 local = network->nodes[i].pos - center;
+        Vec3 pbc_pos = network->cell.pbc_position(center, network->nodes[i].pos);
+        Vec3 local = pbc_pos - center;
 
-        // 用原始 local 判面,不 clamp
-        // axn[k] = +1/-1 表示该轴已贴或越过 ±half,0 表示自由
+        // 判面:只认"接近 ±half"的节点(加上界),远处节点不判
         int axn[3]; int faces = 0;
         for (int k = 0; k < 3; k++) {
-            if      (local[k] >=  half - tol_face) { axn[k] = +1; faces++; }
-            else if (local[k] <= -half + tol_face) { axn[k] = -1; faces++; }
-            else                                     axn[k] = 0;
+            if      (fabs(local[k] - half) <= tol_face) { axn[k] = +1; faces++; }
+            else if (fabs(local[k] + half) <= tol_face) { axn[k] = -1; faces++; }
+            else                                          axn[k] = 0;
         }
         if (faces == 0) continue;   // 深入内部,留给 update_inclusion_constraints
 
