@@ -536,6 +536,13 @@ public:
                 }
             }
             if (relerr > emax1) emax1 = relerr;
+            if (std::isnan(drn) || drn > 2000.0) {
+                printf("[BIGMOVE] tag=(%d,%d) drn=%g v=(%g,%g,%g) pos=(%.0f,%.0f,%.0f) xold=(%.0f,%.0f,%.0f)\n",
+                       nodes[i].tag.domain, nodes[i].tag.index, drn,
+                       nodes[i].v.x, nodes[i].v.y, nodes[i].v.z,
+                       nodes[i].pos.x, nodes[i].pos.y, nodes[i].pos.z,
+                       xold.x, xold.y, xold.z);
+            }
             if (std::isnan(drn)) errnans++;
             
             if (flagnodes) {
