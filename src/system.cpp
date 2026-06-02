@@ -662,13 +662,9 @@ void System::check_surface_node_transition(SerialDisNet* network)
     if (surface_node_normal.empty()) return;
 
     double half = inclusion_a_dim * 0.5;
-    // 贴面判定阈值：节点 |local[k]| 与 half 的差距 ≤ tol_face 认为贴该面
-    // 选 minseg/2 = 100 b，能容纳跨棱的一步漂移，又远小于 half
     double tol_face = 100.0;
 
-    int n_transitions = 0;
-    int n_face_to_edge = 0;
-    int n_edge_to_face = 0;
+    int n_face = 0, n_switch = 0, n_anchor = 0;
 
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
@@ -676,90 +672,76 @@ void System::check_surface_node_transition(SerialDisNet* network)
                       + network->nodes[i].tag.index;
         auto it_normal = surface_node_normal.find(key);
         if (it_normal == surface_node_normal.end()) continue;
-
         auto it_incl = surface_node_incl_id.find(key);
         if (it_incl == surface_node_incl_id.end()) continue;
-
         int incl_id = it_incl->second;
         if (incl_id < 0 || incl_id >= (int)inclusion_centers.size()) continue;
         Vec3 center = inclusion_centers[incl_id];
 
         Vec3 old_normal = it_normal->second;
-        Vec3 pos = network->nodes[i].pos;
-        Vec3 local = pos - center;
+        Vec3 local = network->nodes[i].pos - center;
 
-        // 把 local 钳制在立方体内（处理漂出外部的情况）
+        // 用原始 local 判面,不 clamp
+        // axn[k] = +1/-1 表示该轴已贴或越过 ±half,0 表示自由
+        int axn[3]; int faces = 0;
         for (int k = 0; k < 3; k++) {
-            if (local[k] >  half) local[k] =  half;
-            if (local[k] < -half) local[k] = -half;
+            if      (local[k] >=  half - tol_face) { axn[k] = +1; faces++; }
+            else if (local[k] <= -half + tol_face) { axn[k] = -1; faces++; }
+            else                                     axn[k] = 0;
         }
+        if (faces == 0) continue;   // 深入内部,留给 update_inclusion_constraints
 
-        // 判定节点贴在哪些面上
-        bool on_face[3][2];  // on_face[k][0] = 贴 -k 面, on_face[k][1] = 贴 +k 面
-        int faces_count = 0;
-        for (int k = 0; k < 3; k++) {
-            on_face[k][0] = (fabs(local[k] - (-half)) <= tol_face);
-            on_face[k][1] = (fabs(local[k] -   half ) <= tol_face);
-            if (on_face[k][0]) faces_count++;
-            if (on_face[k][1]) faces_count++;
-        }
+        int old_axis = -1, old_faces = 0;
+        for (int k = 0; k < 3; k++)
+            if (fabs(old_normal[k]) > 0.5) { old_axis = k; old_faces++; }
 
-        // 如果一个轴同时贴正负面（不可能，但浮点边界保险）
-        for (int k = 0; k < 3; k++) {
-            if (on_face[k][0] && on_face[k][1]) {
-                if (local[k] >= 0) on_face[k][0] = false;
-                else               on_face[k][1] = false;
-                faces_count--;
-            }
-        }
-
-        if (faces_count == 0) {
-            // 节点不贴任何面 —— 深入内部，留给 update_inclusion_constraints 处理
-            continue;
-        }
-
-        // 根据贴面情况构造新的法向量和新位置
         Vec3 new_normal(0.0);
         Vec3 new_local = local;
+        bool anchor = false;
 
-        for (int k = 0; k < 3; k++) {
-            if (on_face[k][1]) {
-                new_normal[k] += 1.0;
-                new_local[k]   =  half;
-            } else if (on_face[k][0]) {
-                new_normal[k] += -1.0;
-                new_local[k]   = -half;
+        if (faces == 1) {
+            // 面节点:钉法向轴(截断越界),自由轴保留 → mobility 沿交线流动
+            for (int k = 0; k < 3; k++)
+                if (axn[k] != 0) { new_normal[k] = axn[k]; new_local[k] = axn[k]*half; }
+            n_face++;
+        }
+        else if (faces == 2 && old_faces == 1) {
+            // 流动面节点越界到棱 → 换到新越界面单面继续流动
+            int new_axis = -1;
+            for (int k = 0; k < 3; k++)
+                if (axn[k] != 0 && k != old_axis) { new_axis = k; break; }
+            if (new_axis < 0) {
+                // 异常回退:当棱锚点
+                for (int k = 0; k < 3; k++)
+                    if (axn[k] != 0) { new_normal[k] = axn[k]; new_local[k] = axn[k]*half; }
+                anchor = true; n_anchor++;
+            } else {
+                // 换到新面单面法向,两轴都钉 half(节点落在棱上,下一步沿新面交线流入)
+                new_normal[new_axis] = axn[new_axis];
+                for (int k = 0; k < 3; k++)
+                    if (axn[k] != 0) new_local[k] = axn[k]*half;
+                n_switch++;
             }
         }
+        else {
+            // faces>=2 且已是棱/角锚点,或 faces==3(角):多面合成法向,v=0 锚点
+            for (int k = 0; k < 3; k++)
+                if (axn[k] != 0) { new_normal[k] = axn[k]; new_local[k] = axn[k]*half; }
+            anchor = true; n_anchor++;
+        }
 
-        // 归一化法向量
         double nmag = new_normal.norm();
         if (nmag < 1e-10) continue;
-        new_normal = (1.0 / nmag) * new_normal;
+        new_normal = (1.0/nmag) * new_normal;
 
-        // 检查是否真的发生了状态变化
-        double change = (new_normal - old_normal).norm();
-        if (change < 1e-6) continue;
-
-        // 统计状态变化类型
-        int old_faces = 0, new_faces = 0;
-        for (int k = 0; k < 3; k++) {
-            if (fabs(old_normal[k]) > 0.5) old_faces++;
-            if (fabs(new_normal[k]) > 0.5) new_faces++;
-        }
-        if      (old_faces == 1 && new_faces == 2) n_face_to_edge++;
-        else if (old_faces == 2 && new_faces == 1) n_edge_to_face++;
-        n_transitions++;
-
-        // 应用更新
         it_normal->second = new_normal;
         network->nodes[i].pos = network->cell.pbc_fold(center + new_local);
+        if (anchor) network->nodes[i].v = Vec3(0.0);
     }
 
-    if (n_transitions > 0) {
-        ExaDiS_log("Orowan: surface transitions: %d total (face→edge: %d, edge→face: %d)\n",
-                   n_transitions, n_face_to_edge, n_edge_to_face);
-    }
+    if (n_face + n_switch + n_anchor > 0)
+        ExaDiS_log("Orowan: surface nodes — face=%d, switch=%d, anchor=%d\n",
+                   n_face, n_switch, n_anchor);
 }
 
 /*---------------------------------------------------------------------------
