@@ -679,64 +679,55 @@ void System::check_surface_node_transition(SerialDisNet* network)
         Vec3 center = inclusion_centers[incl_id];
 
         Vec3 old_normal = it_normal->second;
-        Vec3 pbc_pos = network->cell.pbc_position(center, network->nodes[i].pos);
-        Vec3 local = pbc_pos - center;
+        Vec3 local = network->cell.pbc_position(center, network->nodes[i].pos) - center;
 
-        // 判面:只认"接近 ±half"的节点(加上界),远处节点不判
-        int axn[3]; int faces = 0;
-        for (int k = 0; k < 3; k++) {
-            if      (fabs(local[k] - half) <= tol_face) { axn[k] = +1; faces++; }
-            else if (fabs(local[k] + half) <= tol_face) { axn[k] = -1; faces++; }
-            else                                          axn[k] = 0;
-        }
-        if (faces == 0) continue;   // 深入内部,留给 update_inclusion_constraints
-
+        // 当前面由 old_normal 决定
         int old_axis = -1, old_faces = 0;
         for (int k = 0; k < 3; k++)
             if (fabs(old_normal[k]) > 0.5) { old_axis = k; old_faces++; }
 
+        // 棱/角锚点:钉各法向轴,v=0,不换面
+        if (old_faces >= 2) {
+            Vec3 nl = local;
+            for (int k = 0; k < 3; k++)
+                if (fabs(old_normal[k]) > 0.5) nl[k] = (old_normal[k] > 0 ? half : -half);
+            network->nodes[i].pos = network->cell.pbc_fold(center + nl);
+            network->nodes[i].v   = Vec3(0.0);
+            n_anchor++;
+            continue;
+        }
+        if (old_faces != 1) continue;
+
+        int sa = (old_normal[old_axis] > 0) ? 1 : -1;
+
+        // 节点已离开 old 面(法向轴漂离超过容差)→ 留给 update_inclusion 处理
+        if (fabs(local[old_axis] - sa*half) > tol_face) continue;
+
+        // 换面只在"自由轴真正越过棱"时触发
+        int cross = -1, cs = 0;
+        for (int k = 0; k < 3; k++) {
+            if (k == old_axis) continue;
+            if      (local[k] >  half) { cross = k; cs = +1; break; }
+            else if (local[k] < -half) { cross = k; cs = -1; break; }
+        }
+
         Vec3 new_normal(0.0);
         Vec3 new_local = local;
-        bool anchor = false;
 
-        if (faces == 1) {
-            // 面节点:钉法向轴(截断越界),自由轴保留 → mobility 沿交线流动
-            for (int k = 0; k < 3; k++)
-                if (axn[k] != 0) { new_normal[k] = axn[k]; new_local[k] = axn[k]*half; }
+        if (cross < 0) {
+            // 未越界:保持 old 面,钉法向轴,自由轴保留(接近棱也不钉)
+            new_normal[old_axis]  = sa;
+            new_local[old_axis]   = sa * half;
             n_face++;
+        } else {
+            // 越界:换到 cross 面,只钉新法向轴;old 轴不钉(变自由,靠 mobility 流入新面)
+            new_normal[cross] = cs;
+            new_local[cross]  = cs * half;
+            n_switch++;
         }
-        else if (faces == 2 && old_faces == 1) {
-            // 流动面节点越界到棱 → 换到新越界面单面继续流动
-            int new_axis = -1;
-            for (int k = 0; k < 3; k++)
-                if (axn[k] != 0 && k != old_axis) { new_axis = k; break; }
-            if (new_axis < 0) {
-                // 异常回退:当棱锚点
-                for (int k = 0; k < 3; k++)
-                    if (axn[k] != 0) { new_normal[k] = axn[k]; new_local[k] = axn[k]*half; }
-                anchor = true; n_anchor++;
-            } else {
-                // 换到新面单面法向,两轴都钉 half(节点落在棱上,下一步沿新面交线流入)
-                new_normal[new_axis] = axn[new_axis];
-                for (int k = 0; k < 3; k++)
-                    if (axn[k] != 0) new_local[k] = axn[k]*half;
-                n_switch++;
-            }
-        }
-        else {
-            // faces>=2 且已是棱/角锚点,或 faces==3(角):多面合成法向,v=0 锚点
-            for (int k = 0; k < 3; k++)
-                if (axn[k] != 0) { new_normal[k] = axn[k]; new_local[k] = axn[k]*half; }
-            anchor = true; n_anchor++;
-        }
-
-        double nmag = new_normal.norm();
-        if (nmag < 1e-10) continue;
-        new_normal = (1.0/nmag) * new_normal;
 
         it_normal->second = new_normal;
         network->nodes[i].pos = network->cell.pbc_fold(center + new_local);
-        if (anchor) network->nodes[i].v = Vec3(0.0);
     }
 
     if (n_face + n_switch + n_anchor > 0)
