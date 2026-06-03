@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------*/
 
 #include "system.h"
+#include "inclusion_geometry.h"
 
 namespace ExaDiS {
 
@@ -664,96 +665,9 @@ void System::project_surface_node_velocity(SerialDisNet* network)
  *-------------------------------------------------------------------------*/
 void System::check_surface_node_transition(SerialDisNet* network)
 {
-    if (!inclusion_enabled) return;
-    if (network == nullptr) return;
-    if (surface_node_normal.empty()) return;
-
-    double half = inclusion_a_dim * 0.5;
-    double tol_face = 100.0;
-
-    int n_face = 0, n_switch = 0, n_anchor = 0;
-
-    int nnodes = network->number_of_nodes();
-    for (int i = 0; i < nnodes; i++) {
-        long long key = network->nodes[i].tag.domain * 1000000LL
-                      + network->nodes[i].tag.index;
-        auto it_normal = surface_node_normal.find(key);
-        if (it_normal == surface_node_normal.end()) continue;
-        auto it_incl = surface_node_incl_id.find(key);
-        if (it_incl == surface_node_incl_id.end()) continue;
-        int incl_id = it_incl->second;
-        if (incl_id < 0 || incl_id >= (int)inclusion_centers.size()) continue;
-        Vec3 center = inclusion_centers[incl_id];
-
-        Vec3 old_normal = it_normal->second;
-        Vec3 local = network->cell.pbc_position(center, network->nodes[i].pos) - center;
-
-        // 当前面由 old_normal 决定
-        int old_axis = -1, old_faces = 0;
-        for (int k = 0; k < 3; k++)
-            if (fabs(old_normal[k]) > 0.5) { old_axis = k; old_faces++; }
-
-        // 棱/角锚点:钉各法向轴,v=0,不换面
-        if (old_faces >= 2) {
-            Vec3 nl = local;
-            for (int k = 0; k < 3; k++)
-                if (fabs(old_normal[k]) > 0.5) nl[k] = (old_normal[k] > 0 ? half : -half);
-            Vec3 old_pos_ca = network->nodes[i].pos;
-            network->nodes[i].pos = network->cell.pbc_fold(center + nl);
-            network->nodes[i].v   = Vec3(0.0);
-            { double jmp = (network->nodes[i].pos - old_pos_ca).norm();
-              if (jmp > 500.0)
-                ExaDiS_log("[FIX] src=check_anchor tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
-                           network->nodes[i].tag.domain, network->nodes[i].tag.index, jmp,
-                           old_pos_ca.x, old_pos_ca.y, old_pos_ca.z,
-                           network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
-            n_anchor++;
-            continue;
-        }
-        if (old_faces != 1) continue;
-
-        int sa = (old_normal[old_axis] > 0) ? 1 : -1;
-
-        // 节点已离开 old 面(法向轴漂离超过容差)→ 留给 update_inclusion 处理
-        if (fabs(local[old_axis] - sa*half) > tol_face) continue;
-
-        // 换面只在"自由轴真正越过棱"时触发
-        int cross = -1, cs = 0;
-        for (int k = 0; k < 3; k++) {
-            if (k == old_axis) continue;
-            if      (local[k] >  half) { cross = k; cs = +1; break; }
-            else if (local[k] < -half) { cross = k; cs = -1; break; }
-        }
-
-        Vec3 new_normal(0.0);
-        Vec3 new_local = local;
-
-        if (cross < 0) {
-            // 未越界:保持 old 面,钉法向轴,自由轴保留(接近棱也不钉)
-            new_normal[old_axis]  = sa;
-            new_local[old_axis]   = sa * half;
-            n_face++;
-        } else {
-            // 越界:换到 cross 面,只钉新法向轴;old 轴不钉(变自由,靠 mobility 流入新面)
-            new_normal[cross] = cs;
-            new_local[cross]  = cs * half;
-            n_switch++;
-        }
-
-        it_normal->second = new_normal;
-        { Vec3 old_pos_ch = network->nodes[i].pos;
-          network->nodes[i].pos = network->cell.pbc_fold(center + new_local);
-          double jmp = (network->nodes[i].pos - old_pos_ch).norm();
-          if (jmp > 500.0)
-            ExaDiS_log("[FIX] src=check tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
-                       network->nodes[i].tag.domain, network->nodes[i].tag.index, jmp,
-                       old_pos_ch.x, old_pos_ch.y, old_pos_ch.z,
-                       network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
-    }
-
-    if (n_face + n_switch + n_anchor > 0)
-        ExaDiS_log("Orowan: surface nodes — face=%d, switch=%d, anchor=%d\n",
-                   n_face, n_switch, n_anchor);
+    // Stage 3: disabled — face assignment now handled by correct_surface_node_positions
+    // via realtime classify each step. Edge handling → stage 5.
+    return;
 }
 
 /*---------------------------------------------------------------------------
@@ -1560,7 +1474,7 @@ void System::correct_surface_node_positions(SerialDisNet* network)
 {
     if (!inclusion_enabled) return;
     if (network == nullptr) return;
-    if (surface_node_normal.empty()) return;
+    if (surface_node_incl_id.empty()) return;
 
     double half = inclusion_a_dim * 0.5;
     int n_corrected = 0;
@@ -1570,60 +1484,33 @@ void System::correct_surface_node_positions(SerialDisNet* network)
     for (int i = 0; i < nnodes; i++) {
         long long key = network->nodes[i].tag.domain * 1000000LL
                       + network->nodes[i].tag.index;
-        auto it_normal = surface_node_normal.find(key);
-        if (it_normal == surface_node_normal.end()) continue;
-
         auto it_incl = surface_node_incl_id.find(key);
         if (it_incl == surface_node_incl_id.end()) continue;
-
-        Vec3 n = it_normal->second;
         int incl_id = it_incl->second;
-
         if (incl_id < 0 || incl_id >= (int)inclusion_centers.size()) continue;
         Vec3 center = inclusion_centers[incl_id];
 
-        // ★ 晶体学严格化:只对面节点做位置修正
-        // 棱节点和角节点的位置由 enforce_edge_continuity 严格生成在
-        // 滑移面与棱的交点上,这里不应该再做几何 snap 破坏严格性。
-        int faces_count = 0;
-        for (int k = 0; k < 3; k++) {
-            if (fabs(n[k]) > 0.5) faces_count++;
-        }
-        if (faces_count != 1) continue;  // 跳过棱节点(2 个面)和角节点(3 个面)
-
+        // Realtime classify: face assignment from CURRENT position, never stale stored normal.
         Vec3 old_pos = network->nodes[i].pos;
-        Vec3 local = old_pos - center;
+        Vec3 local = network->cell.pbc_position(center, old_pos) - center;
+        int face_sign[3];
+        inclusion_nearest_face(local, face_sign);
+        surface_node_normal[key] = inclusion_normal(face_sign);  // keep map consistent for mobility/enforce
+        Vec3 new_pos = network->cell.pbc_fold(center + inclusion_project(local, face_sign, half));
 
-        for (int k = 0; k < 3; k++) {
-            if (fabs(n[k]) > 0.5) {
-                local[k] = (n[k] > 0.0) ? half : -half;
-            }
-        }
-
-        // 先算未折叠的目标位置，用它算真实 drift
-        Vec3 target_pos = center + local;
-        double drift = (target_pos - old_pos).norm();
-
-        // 折叠后存储
-        Vec3 new_pos = network->cell.pbc_fold(target_pos);
+        double drift = (new_pos - old_pos).norm();
         if (drift > 500.0)
-            ExaDiS_log("[FIX] src=correct tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
+            ExaDiS_log("[FIX] src=correct_NEW tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
                        network->nodes[i].tag.domain, network->nodes[i].tag.index, drift,
-                       old_pos.x, old_pos.y, old_pos.z,
-                       new_pos.x, new_pos.y, new_pos.z);
+                       old_pos.x, old_pos.y, old_pos.z, new_pos.x, new_pos.y, new_pos.z);
         network->nodes[i].pos = new_pos;
 
-        // 统计校正幅度（用于诊断；只记录 > 1e-3 b 的"有意义校正"）
-        if (drift > 1e-3) {
-            n_corrected++;
-            if (drift > max_drift) max_drift = drift;
-        }
+        if (drift > 1e-3) { n_corrected++; if (drift > max_drift) max_drift = drift; }
     }
 
-    if (n_corrected > 0) {
-        ExaDiS_log("Orowan: corrected %d surface node positions (max drift = %.3f b)\n",
+    if (n_corrected > 0)
+        ExaDiS_log("Orowan: corrected %d surface nodes (max drift=%.1f b, realtime classify)\n",
                    n_corrected, max_drift);
-    }
 }
 
 } // namespace ExaDiS
