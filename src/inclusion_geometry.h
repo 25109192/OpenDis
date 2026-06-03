@@ -57,6 +57,19 @@ Vec3 inclusion_project(const Vec3& local, const int face_sign[3], double half) {
     return p;
 }
 
+// Project + clamp: pin constrained axes to ±half, clamp free axes to [-half,+half].
+// Prevents node from drifting outside the face's square boundary (no-switch model).
+KOKKOS_INLINE_FUNCTION
+Vec3 inclusion_project_clamp(const Vec3& local, const int face_sign[3], double half) {
+    Vec3 p = local;
+    for (int k = 0; k < 3; k++) {
+        if (face_sign[k] != 0) p[k] = face_sign[k] * half;
+        else { if (p[k] >  half) p[k] =  half;
+               if (p[k] < -half) p[k] = -half; }
+    }
+    return p;
+}
+
 // Force single-face assignment (for FLOW nodes): find the axis where
 // |local[k]| is largest and assign that as the only face.
 KOKKOS_INLINE_FUNCTION

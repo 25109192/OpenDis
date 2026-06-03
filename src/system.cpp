@@ -1496,7 +1496,7 @@ void System::correct_surface_node_positions(SerialDisNet* network)
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
         surface_node_normal[key] = inclusion_normal(face_sign);  // keep map consistent for mobility/enforce
-        Vec3 new_pos = network->cell.pbc_fold(center + inclusion_project(local, face_sign, half));
+        Vec3 new_pos = network->cell.pbc_fold(center + inclusion_project_clamp(local, face_sign, half));
 
         double drift = (new_pos - old_pos).norm();
         if (drift > 500.0)
