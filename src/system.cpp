@@ -396,11 +396,18 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         }
 
         // ---- 投影 + PIN + 登记 ----
+        Vec3 old_pos_upd = network->nodes[i].pos;
         network->nodes[i].pos        = network->cell.pbc_fold(c + best_proj);
         network->nodes[i].constraint = INCLUSION_NODE;
         network->nodes[i].v          = Vec3(0.0);
         surface_node_normal[key]     = best_normal;
         surface_node_incl_id[key]    = detected_incl;
+        { double jmp = (network->nodes[i].pos - old_pos_upd).norm();
+          if (jmp > 500.0)
+            ExaDiS_log("[FIX] src=update tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
+                       network->nodes[i].tag.domain, network->nodes[i].tag.index, jmp,
+                       old_pos_upd.x, old_pos_upd.y, old_pos_upd.z,
+                       network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
         ExaDiS_log("[NODE_PIN] update_inclusion_constraints node=%d pos=(%.0f,%.0f,%.0f)\n",
                    i, network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z);
 
@@ -691,8 +698,15 @@ void System::check_surface_node_transition(SerialDisNet* network)
             Vec3 nl = local;
             for (int k = 0; k < 3; k++)
                 if (fabs(old_normal[k]) > 0.5) nl[k] = (old_normal[k] > 0 ? half : -half);
+            Vec3 old_pos_ca = network->nodes[i].pos;
             network->nodes[i].pos = network->cell.pbc_fold(center + nl);
             network->nodes[i].v   = Vec3(0.0);
+            { double jmp = (network->nodes[i].pos - old_pos_ca).norm();
+              if (jmp > 500.0)
+                ExaDiS_log("[FIX] src=check_anchor tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
+                           network->nodes[i].tag.domain, network->nodes[i].tag.index, jmp,
+                           old_pos_ca.x, old_pos_ca.y, old_pos_ca.z,
+                           network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
             n_anchor++;
             continue;
         }
@@ -727,7 +741,14 @@ void System::check_surface_node_transition(SerialDisNet* network)
         }
 
         it_normal->second = new_normal;
-        network->nodes[i].pos = network->cell.pbc_fold(center + new_local);
+        { Vec3 old_pos_ch = network->nodes[i].pos;
+          network->nodes[i].pos = network->cell.pbc_fold(center + new_local);
+          double jmp = (network->nodes[i].pos - old_pos_ch).norm();
+          if (jmp > 500.0)
+            ExaDiS_log("[FIX] src=check tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
+                       network->nodes[i].tag.domain, network->nodes[i].tag.index, jmp,
+                       old_pos_ch.x, old_pos_ch.y, old_pos_ch.z,
+                       network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
     }
 
     if (n_face + n_switch + n_anchor > 0)
@@ -977,6 +998,10 @@ void System::insert_surface_nodes(SerialDisNet* network)
         for (int i = 0; i < network->number_of_nodes(); i++) {
             if (network->nodes[i].constraint == INCLUSION_NODE) continue;
             if (network->conn[i].num <= 1) {
+                ExaDiS_log("[FIX] src=isolate980 tag=(%d,%d) conn=%d pos=(%.0f,%.0f,%.0f)\n",
+                           network->nodes[i].tag.domain, network->nodes[i].tag.index,
+                           network->conn[i].num,
+                           network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z);
                 network->nodes[i].constraint = INCLUSION_NODE;
                 network->nodes[i].v = Vec3(0.0);
                 long long key = network->nodes[i].tag.domain * 1000000LL
@@ -1581,6 +1606,11 @@ void System::correct_surface_node_positions(SerialDisNet* network)
 
         // 折叠后存储
         Vec3 new_pos = network->cell.pbc_fold(target_pos);
+        if (drift > 500.0)
+            ExaDiS_log("[FIX] src=correct tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
+                       network->nodes[i].tag.domain, network->nodes[i].tag.index, drift,
+                       old_pos.x, old_pos.y, old_pos.z,
+                       new_pos.x, new_pos.y, new_pos.z);
         network->nodes[i].pos = new_pos;
 
         // 统计校正幅度（用于诊断；只记录 > 1e-3 b 的"有意义校正"）
