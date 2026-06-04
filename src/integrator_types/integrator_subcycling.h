@@ -134,10 +134,12 @@ public:
         Kokkos::parallel_reduce(net->Nnodes_local, KOKKOS_LAMBDA(const int& i, int& s) {
             auto nodes = net->get_nodes();
             Vec3 f = nodes[i].f;
-            if (f.x != f.x || f.y != f.y || f.z != f.z) s++;
+            bool bad = (f.x != f.x || f.y != f.y || f.z != f.z) ||
+                       (fabs(f.x) > 1e50 || fabs(f.y) > 1e50 || fabs(f.z) > 1e50);
+            if (bad) s++;
         }, c);
         Kokkos::fence();
-        if (c > 0) printf("[FNAN] after %s (group=%d): %d node-forces nan\n", tag, group, c);
+        if (c > 0) printf("[FNAN] after %s (group=%d): %d node-forces bad(nan/huge)\n", tag, group, c);
     }
 
     void compute(System* system, bool zero=true) {
