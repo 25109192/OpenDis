@@ -198,19 +198,20 @@ struct MobilityFCC0
         
 
         if (vi.x != vi.x || vi.y != vi.y || vi.z != vi.z) {
+            Vec3 pos_i = nodes[i].pos;
             double minL = 1e30;
             int nzSegs = 0;
             for (int j = 0; j < nconn; j++) {
                 int k = conn[i].node[j];
-                Vec3 r2 = cell.pbc_position(r1, nodes[k].pos);
-                double L = (r2-r1).norm();
+                Vec3 r2 = cell.pbc_position(pos_i, nodes[k].pos);
+                double L = (r2 - pos_i).norm();
                 if (L < minL) minL = L;
                 if (L > 1e-10) nzSegs++;
             }
-            printf("[VNAN] tag=(%d,%d) c=%d nconn=%d nzSegs=%d minSegL=%g LtimesB=%g fi=(%g,%g,%g) pos=(%.0f,%.0f,%.0f)\n",
+            printf("[VNAN] tag=(%d,%d) c=%d nconn=%d nzSegs=%d minSegL=%g fi=(%g,%g,%g) pos=(%.0f,%.0f,%.0f)\n",
                    nodes[i].tag.domain, nodes[i].tag.index, nodes[i].constraint,
-                   nconn, nzSegs, minL, LtimesB, fi.x, fi.y, fi.z,
-                   nodes[i].pos.x, nodes[i].pos.y, nodes[i].pos.z);
+                   nconn, nzSegs, minL, fi.x, fi.y, fi.z,
+                   pos_i.x, pos_i.y, pos_i.z);
         }
 
         return vi;
