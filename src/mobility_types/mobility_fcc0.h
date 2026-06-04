@@ -197,9 +197,25 @@ struct MobilityFCC0
         }
         
 
+        if (vi.x != vi.x || vi.y != vi.y || vi.z != vi.z) {
+            double minL = 1e30;
+            int nzSegs = 0;
+            for (int j = 0; j < nconn; j++) {
+                int k = conn[i].node[j];
+                Vec3 r2 = cell.pbc_position(r1, nodes[k].pos);
+                double L = (r2-r1).norm();
+                if (L < minL) minL = L;
+                if (L > 1e-10) nzSegs++;
+            }
+            printf("[VNAN] tag=(%d,%d) c=%d nconn=%d nzSegs=%d minSegL=%g LtimesB=%g fi=(%g,%g,%g) pos=(%.0f,%.0f,%.0f)\n",
+                   nodes[i].tag.domain, nodes[i].tag.index, nodes[i].constraint,
+                   nconn, nzSegs, minL, LtimesB, fi.x, fi.y, fi.z,
+                   nodes[i].pos.x, nodes[i].pos.y, nodes[i].pos.z);
+        }
+
         return vi;
     }
-    
+
     static constexpr const char* name = "MobilityFCC0";
 };
 
