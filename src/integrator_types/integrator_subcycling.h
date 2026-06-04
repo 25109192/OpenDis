@@ -128,20 +128,35 @@ public:
         // Skip fsegseg pre-compute. We'll build all
         // subcycling groups during the integration.
     }
-    
+
+    void count_force_nan(DeviceDisNet* net, const char* tag) {
+        int c = 0;
+        Kokkos::parallel_reduce(net->Nnodes_local, KOKKOS_LAMBDA(const int& i, int& s) {
+            auto nodes = net->get_nodes();
+            Vec3 f = nodes[i].f;
+            if (f.x != f.x || f.y != f.y || f.z != f.z) s++;
+        }, c);
+        Kokkos::fence();
+        if (c > 0) printf("[FNAN] after %s (group=%d): %d node-forces nan\n", tag, group, c);
+    }
+
     void compute(System* system, bool zero=true) {
         if (Ngroups <= 0)
             ExaDiS_fatal("Error: undefined number of groups in ForceSubcycling\n");
-        
+
         DeviceDisNet *net = system->get_device_network();
         if (zero) zero_force(net);
-        
+
         if (group == 0) {
             // This is the group containing the segment forces
             fseg->compute(system, false);
-            if (flong_group0)
+            count_force_nan(net, "fseg");
+            if (flong_group0) {
                 flong->compute(system, false);
+                count_force_nan(net, "flong");
+            }
             fsegseg->compute(system, false);
+            count_force_nan(net, "fsegseg");
             // In the drift scheme we integrate under all forces
             // so add all other group forces
             if (drift) {
@@ -150,9 +165,12 @@ public:
             }
         } else if (group > 0) {
             // These are the groups containing the seg/seg forces
-            if (!flong_group0 && group == Ngroups-1)
+            if (!flong_group0 && group == Ngroups-1) {
                 flong->compute(system, false);
+                count_force_nan(net, "flong");
+            }
             fsegseg->compute(system, false);
+            count_force_nan(net, "fsegseg");
         }
         // Do not compute forces if group = -1
     }
