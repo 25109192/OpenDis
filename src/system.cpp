@@ -117,6 +117,8 @@ void System::initialize(Params _params, Crystal _crystal, SerialDisNet *network)
         inclusion_initialized = true;
     }
 
+    if (inclusion_enabled) network->recycle = false;  // [VERIFY] disable index recycling to confirm stale-label inheritance root cause
+
     reset_glide_planes();
     update_inclusion_constraints(network);
 
