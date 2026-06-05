@@ -271,9 +271,17 @@ bool System::is_node_strictly_inside_inclusion(const Vec3& pos) const {
 void System::plastic_strain()
 {
     DeviceDisNet* net = get_device_network();
-    if (inclusion_enabled && (int)xold.extent(0) < net->Nnodes_local)
-        ExaDiS_log("[XCHK] xold.size=%d Nnodes=%d (xold SMALLER -> out-of-bounds!)\n",
-                   (int)xold.extent(0), net->Nnodes_local);
+    int oldsz = (int)xold.extent(0);
+    if (oldsz < net->Nnodes_local) {
+        Kokkos::resize(xold, net->Nnodes_local);
+        T_x xo = xold;
+        Kokkos::parallel_for(Kokkos::RangePolicy<>(oldsz, net->Nnodes_local),
+            KOKKOS_LAMBDA(const int& i){
+                auto nodes = net->get_nodes();
+                xo(i) = nodes[i].pos;
+            });
+        Kokkos::fence();
+    }
     TeamSize ts = get_team_sizes(net->Nsegs_local);
     Kokkos::parallel_for(Kokkos::TeamPolicy<>(ts.num_teams, ts.team_size),
         PlasticStrain<DeviceDisNet>(this, net)
