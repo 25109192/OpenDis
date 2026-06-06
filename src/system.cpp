@@ -1134,6 +1134,8 @@ void System::reset_glide_planes()
     Kokkos::parallel_for(net->Nsegs_local, KOKKOS_LAMBDA(const int& i) {
         auto nodes = net->get_nodes();
         auto segs = net->get_segs();
+        if (nodes[segs[i].n1].constraint == INCLUSION_NODE ||
+            nodes[segs[i].n2].constraint == INCLUSION_NODE) return;
         Vec3 pold = segs[i].plane;
         Vec3 pnew = cryst->find_seg_glide_plane(net, i);
         if (pnew.norm2() > 1e-5 && (pnew-pold).norm2() > 1e-5) {
