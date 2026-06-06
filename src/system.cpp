@@ -1457,7 +1457,25 @@ void System::correct_surface_node_positions(SerialDisNet* network)
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
         surface_node_normal[key] = inclusion_normal(face_sign);  // keep map consistent for mobility/enforce
-        Vec3 new_pos = network->cell.pbc_fold(center + inclusion_project_capture(local, face_sign, half, 30.0)); // 30b margin
+
+        // Stage 6: get this node's glide plane from a connected non-ghost segment,
+        // then project position onto the (face ∩ glide-plane) 1D line so the node
+        // crawls along the slip line and naturally anchors when it hits a box edge.
+        // Fall back to the 2D capture projection if no glide plane is available.
+        Vec3 glide_n(0.0);
+        bool has_glide = false;
+        for (int j = 0; j < network->conn[i].num; j++) {
+            int s = network->conn[i].seg[j];
+            if (network->segs[s].burg.norm2() < 1e-20) continue;   // skip ghost segs
+            if (network->segs[s].plane.norm2() < 1e-10) continue;  // skip planeless segs
+            glide_n = network->segs[s].plane.normalized();
+            has_glide = true;
+            break;
+        }
+        Vec3 proj = has_glide
+                  ? inclusion_project_glide_line(local, face_sign, half, glide_n)
+                  : inclusion_project_capture(local, face_sign, half, 30.0);
+        Vec3 new_pos = network->cell.pbc_fold(center + proj);
 
         double drift = (new_pos - old_pos).norm();
         if (drift > 500.0)

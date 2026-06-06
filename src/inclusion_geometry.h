@@ -98,6 +98,33 @@ Vec3 inclusion_project_capture(const Vec3& local, const int face_sign[3], double
     return p;
 }
 
+// Project local onto the 1D line (face ∩ glide-plane):
+// pin the face axis to ±half, then slide within the face along glide_n's
+// in-face component back onto the glide plane (minimal correction), and
+// clamp the free axes to the box edges (node naturally anchors at an edge).
+// glide_n = dislocation glide-plane normal (lab axes = inclusion-local axes,
+// since the inclusion is an axis-aligned cube).
+KOKKOS_INLINE_FUNCTION
+Vec3 inclusion_project_glide_line(const Vec3& local, const int face_sign[3],
+                                  double half, const Vec3& glide_n) {
+    int a = (face_sign[0] != 0) ? 0 : ((face_sign[1] != 0) ? 1 : 2);
+    int b = (a + 1) % 3, c = (a + 2) % 3;
+    Vec3 p = local;
+    double da = face_sign[a] * half - local[a];
+    p[a] = face_sign[a] * half;
+    double denom = glide_n[b]*glide_n[b] + glide_n[c]*glide_n[c];
+    if (denom > 1e-12) {
+        double t = -glide_n[a] * da / denom;
+        p[b] = local[b] + t * glide_n[b];
+        p[c] = local[c] + t * glide_n[c];
+    }
+    if (p[b] >  half) p[b] =  half;
+    if (p[b] < -half) p[b] = -half;
+    if (p[c] >  half) p[c] =  half;
+    if (p[c] < -half) p[c] = -half;
+    return p;
+}
+
 } // namespace ExaDiS
 
 #endif
