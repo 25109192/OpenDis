@@ -84,6 +84,20 @@ void inclusion_nearest_face(const Vec3& local, int face_sign[3]) {
     face_sign[best] = (local[best] >= 0.0) ? +1 : -1;
 }
 
+// Capture projection: pin face axes to ±half; for free axes that overshoot
+// (|p|>half), pull them just inside to ±(half-margin). In-range free axes
+// are untouched, so legitimate near-edge face nodes are unaffected.
+KOKKOS_INLINE_FUNCTION
+Vec3 inclusion_project_capture(const Vec3& local, const int face_sign[3], double half, double margin) {
+    Vec3 p = local;
+    for (int k = 0; k < 3; k++) {
+        if (face_sign[k] != 0) p[k] = face_sign[k] * half;
+        else { if (p[k] >  half) p[k] =  half - margin;
+               if (p[k] < -half) p[k] = -half + margin; }
+    }
+    return p;
+}
+
 } // namespace ExaDiS
 
 #endif

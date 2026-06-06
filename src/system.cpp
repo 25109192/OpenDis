@@ -386,7 +386,7 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
         Vec3 best_normal = inclusion_normal(face_sign);
-        Vec3 best_proj   = inclusion_project_clamp(local, face_sign, half);
+        Vec3 best_proj   = inclusion_project_capture(local, face_sign, half, 30.0); // 30b margin
 
         // ---- 投影 + PIN + 登记 ----
         Vec3 old_pos_upd = network->nodes[i].pos;
@@ -891,7 +891,7 @@ void System::insert_surface_nodes(SerialDisNet* network)
         // 孤立节点保护：删除 ci 后连接数 <=1 的非 PINNED 节点固定
         for (int i = 0; i < network->number_of_nodes(); i++) {
             if (network->nodes[i].constraint == INCLUSION_NODE) continue;
-            if (network->conn[i].num <= 1) {
+            if (network->conn[i].num <= 1 && is_node_in_inclusion(network->nodes[i].pos)) {
                 ExaDiS_log("[FIX] src=isolate980 tag=(%d,%d) conn=%d pos=(%.0f,%.0f,%.0f)\n",
                            network->nodes[i].tag.domain, network->nodes[i].tag.index,
                            network->conn[i].num,
@@ -931,15 +931,6 @@ void System::insert_surface_nodes(SerialDisNet* network)
                 if (seg_len > max_seg_len) {
                     ExaDiS_log("Warning: Orowan skipping too-long segment (%.0f b), "
                                "likely PBC issue\n", seg_len);
-                    // 两端节点固定，防止发散
-                    if (network->nodes[na].constraint != INCLUSION_NODE) {
-                        network->nodes[na].constraint = INCLUSION_NODE;
-                        network->nodes[na].v = Vec3(0.0);
-                    }
-                    if (network->nodes[nb_idx].constraint != INCLUSION_NODE) {
-                        network->nodes[nb_idx].constraint = INCLUSION_NODE;
-                        network->nodes[nb_idx].v = Vec3(0.0);
-                    }
                     continue;
                 }
  
@@ -959,14 +950,6 @@ void System::insert_surface_nodes(SerialDisNet* network)
  
                 if (crosses) {
                     ExaDiS_log("Orowan: two arms on opposite sides, not connecting\n");
-                    if (network->nodes[na].constraint != INCLUSION_NODE) {
-                        network->nodes[na].constraint = INCLUSION_NODE;
-                        network->nodes[na].v = Vec3(0.0);
-                    }
-                    if (network->nodes[nb_idx].constraint != INCLUSION_NODE) {
-                        network->nodes[nb_idx].constraint = INCLUSION_NODE;
-                        network->nodes[nb_idx].v = Vec3(0.0);
-                    }
                     continue;
                 }
  
@@ -1474,7 +1457,7 @@ void System::correct_surface_node_positions(SerialDisNet* network)
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
         surface_node_normal[key] = inclusion_normal(face_sign);  // keep map consistent for mobility/enforce
-        Vec3 new_pos = network->cell.pbc_fold(center + inclusion_project_clamp(local, face_sign, half));
+        Vec3 new_pos = network->cell.pbc_fold(center + inclusion_project_capture(local, face_sign, half, 30.0)); // 30b margin
 
         double drift = (new_pos - old_pos).norm();
         if (drift > 500.0)
