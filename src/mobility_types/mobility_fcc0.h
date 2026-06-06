@@ -95,13 +95,16 @@ struct MobilityFCC0
                 Vec3 dr = r2-r1;
                 double L = dr.norm();
                 if (L < eps) continue;
-                numNonZeroLenSegs++;
-                dr = 1.0/L * dr;
-                
+
                 int s = conn[i].seg[j];
                 int order = conn[i].order[j];
                 Vec3 burg = order*segs[s].burg;
                 double bMag = burg.norm();
+                if (bMag < eps) continue;  // ghost seg (burg zeroed), skip entirely
+
+                numNonZeroLenSegs++;
+                dr = 1.0/L * dr;
+
                 double dangle = 1.0 / bMag * fabs(dot(burg, dr));
                 
                 double Mob = Medge+(Mscrew-Medge)*dangle;
