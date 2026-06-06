@@ -630,10 +630,6 @@ void ExaDiSApp::step(Control& ctrl)
     force->pre_compute(system);
     
     // Nodal force calculation
-    if (system->inclusion_enabled)
-        ExaDiS_log("[EXTSTRESS] xx=%g xy=%g xz=%g yy=%g yz=%g zz=%g\n",
-                   system->extstress[0][0], system->extstress[0][1], system->extstress[0][2],
-                   system->extstress[1][1], system->extstress[1][2], system->extstress[2][2]);
     force->compute(system);
     
     // Mobility calculation

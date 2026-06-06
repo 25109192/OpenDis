@@ -382,32 +382,11 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         Vec3 c = inclusion_centers[detected_incl];
         Vec3 local = pos - c;
 
-        // 钳制到立方体内（用于外部节点）
-        Vec3 clamped_local = local;
-        if (clamped_local.x >  half) clamped_local.x =  half;
-        if (clamped_local.x < -half) clamped_local.x = -half;
-        if (clamped_local.y >  half) clamped_local.y =  half;
-        if (clamped_local.y < -half) clamped_local.y = -half;
-        if (clamped_local.z >  half) clamped_local.z =  half;
-        if (clamped_local.z < -half) clamped_local.z = -half;
-
-        // 找最近的面（每个轴到 ±half 的距离取最小）
-        double dx = half - fabs(clamped_local.x);
-        double dy = half - fabs(clamped_local.y);
-        double dz = half - fabs(clamped_local.z);
-
-        Vec3 best_proj = clamped_local;
-        Vec3 best_normal;
-        if (dx <= dy && dx <= dz) {
-            best_proj.x   = (clamped_local.x >= 0.0) ? half : -half;
-            best_normal   = Vec3((clamped_local.x >= 0.0 ? 1.0 : -1.0), 0.0, 0.0);
-        } else if (dy <= dz) {
-            best_proj.y   = (clamped_local.y >= 0.0) ? half : -half;
-            best_normal   = Vec3(0.0, (clamped_local.y >= 0.0 ? 1.0 : -1.0), 0.0);
-        } else {
-            best_proj.z   = (clamped_local.z >= 0.0) ? half : -half;
-            best_normal   = Vec3(0.0, 0.0, (clamped_local.z >= 0.0 ? 1.0 : -1.0));
-        }
+        // 选最近单面 + 投影（统一 helper）
+        int face_sign[3];
+        inclusion_nearest_face(local, face_sign);
+        Vec3 best_normal = inclusion_normal(face_sign);
+        Vec3 best_proj   = inclusion_project_clamp(local, face_sign, half);
 
         // ---- 投影 + PIN + 登记 ----
         Vec3 old_pos_upd = network->nodes[i].pos;
@@ -422,9 +401,6 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
                        network->nodes[i].tag.domain, network->nodes[i].tag.index, jmp,
                        old_pos_upd.x, old_pos_upd.y, old_pos_upd.z,
                        network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
-        ExaDiS_log("[NODE_PIN] update_inclusion_constraints node=%d pos=(%.0f,%.0f,%.0f)\n",
-                   i, network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z);
-
         new_fixed++;
         new_projected++;
         if (is_just_outside) new_outside++;
@@ -590,8 +566,6 @@ int nnodes = network->number_of_nodes();
         network->nodes[i].pos        = network->cell.pbc_fold(best_hit);
         network->nodes[i].constraint = INCLUSION_NODE;
         network->nodes[i].v          = Vec3(0.0);
-        ExaDiS_log("[NODE_PIN] snap_nodes_to_surface node=%d pos=(%.0f,%.0f,%.0f)\n",
-                   i, network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z);
         snapped++;
     }
 
@@ -638,13 +612,11 @@ void System::project_surface_node_velocity(SerialDisNet* network)
     if (surface_node_normal.empty()) return;
 
     int nnodes = network->number_of_nodes();
-    int hit_count = 0;
     for (int i = 0; i < nnodes; i++) {
         long long key = network->nodes[i].tag.domain * 1000000LL
                       + network->nodes[i].tag.index;
         auto it = surface_node_normal.find(key);
         if (it == surface_node_normal.end()) continue;
-        hit_count++;
         Vec3 normal = it->second;
         Vec3& v = network->nodes[i].v;
         int ncomp = (fabs(normal.x)>0.5) + (fabs(normal.y)>0.5) + (fabs(normal.z)>0.5);
@@ -654,8 +626,6 @@ void System::project_surface_node_velocity(SerialDisNet* network)
             v = v - dot(v, normal) * normal;
         }
     }
-    ExaDiS_log("Orowan: projected %d / %d surface nodes (map size=%zu)\n",
-               hit_count, nnodes, surface_node_normal.size());
 }
 
 /*---------------------------------------------------------------------------
@@ -803,9 +773,6 @@ void System::insert_surface_nodes(SerialDisNet* network)
 
         network->nodes[new_node].constraint = INCLUSION_NODE;
         network->nodes[new_node].v = Vec3(0.0);
-        ExaDiS_log("[NODE_PIN] enforce_edge_continuity node=%d pos=(%.0f,%.0f,%.0f)\n",
-                   new_node, network->nodes[new_node].pos.x,
-                   network->nodes[new_node].pos.y, network->nodes[new_node].pos.z);
         new_surface_nodes++;
         // 验证插入位置的深度
         Vec3 inserted_pos = network->nodes[new_node].pos;
@@ -1459,9 +1426,7 @@ void System::enforce_edge_continuity(SerialDisNet* network)
                           + network->nodes[new_node].tag.index;
         surface_node_normal[new_key]  = info.new_normal;
         surface_node_incl_id[new_key] = info.incl_id;
-        ExaDiS_log("[NODE_PIN] insert_surface_nodes node=%d pos=(%.0f,%.0f,%.0f)\n",
-                   new_node, network->nodes[new_node].pos.x,
-                   network->nodes[new_node].pos.y, network->nodes[new_node].pos.z);
+
 
         n_inserted++;
     }
@@ -1492,8 +1457,6 @@ void System::correct_surface_node_positions(SerialDisNet* network)
     if (surface_node_incl_id.empty()) return;
 
     double half = inclusion_a_dim * 0.5;
-    int n_corrected = 0;
-    double max_drift = 0.0;
 
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
@@ -1520,12 +1483,7 @@ void System::correct_surface_node_positions(SerialDisNet* network)
                        old_pos.x, old_pos.y, old_pos.z, new_pos.x, new_pos.y, new_pos.z);
         network->nodes[i].pos = new_pos;
 
-        if (drift > 1e-3) { n_corrected++; if (drift > max_drift) max_drift = drift; }
     }
-
-    if (n_corrected > 0)
-        ExaDiS_log("Orowan: corrected %d surface nodes (max drift=%.1f b, realtime classify)\n",
-                   n_corrected, max_drift);
 }
 
 } // namespace ExaDiS
