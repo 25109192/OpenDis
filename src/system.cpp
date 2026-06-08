@@ -607,6 +607,10 @@ void System::project_surface_node_velocity(SerialDisNet* network)
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
         if (network->nodes[i].constraint != INCLUSION_NODE) continue;
+        if (inclusion_on_edge(network->nodes[i].pos, 2.0)) {
+            network->nodes[i].v = Vec3(0.0);
+            continue;
+        }
         Vec3 normal;
         if (inclusion_single_face_normal(network->nodes[i].pos, normal) < 0) continue;
         Vec3& v = network->nodes[i].v;
@@ -1302,9 +1306,16 @@ void System::correct_surface_node_positions(SerialDisNet* network)
             has_glide = true;
             break;
         }
-        Vec3 proj = has_glide
-                  ? inclusion_project_glide_line(local, face_sign, half, glide_n)
-                  : inclusion_project_capture(local, face_sign, half, 30.0);
+        // Sub-type by position: two axes near ±half → edge/corner node, pin to π∩E.
+        int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
+                      + (fabs(local.z) >= half-2.0);
+        Vec3 proj;
+        if (near_half >= 2 && has_glide)
+            proj = inclusion_project_edge_point(local, half, glide_n);
+        else
+            proj = has_glide
+                 ? inclusion_project_glide_line(local, face_sign, half, glide_n)
+                 : inclusion_project_capture(local, face_sign, half, 30.0);
         Vec3 new_pos = network->cell.pbc_fold(center + proj);
 
         double drift = (new_pos - old_pos).norm();
@@ -1314,6 +1325,70 @@ void System::correct_surface_node_positions(SerialDisNet* network)
                        old_pos.x, old_pos.y, old_pos.z, new_pos.x, new_pos.y, new_pos.z);
         network->nodes[i].pos = new_pos;
 
+    }
+}
+
+/*---------------------------------------------------------------------------
+ *
+ *    Function:     System::insert_edge_nodes()
+ *
+ *    Segment-driven edge interaction: for each segment with a c9 face node
+ *    at one end, detect if the segment crosses a cube edge and insert a new
+ *    c9 corner node at the π∩E intersection (glide plane ∩ cube edge).
+ *
+ *-------------------------------------------------------------------------*/
+void System::insert_edge_nodes(SerialDisNet* network)
+{
+    if (!inclusion_enabled || inclusion_centers.empty()) return;
+    double half = inclusion_a_dim * 0.5;
+    const double min_sep = 5.0;
+
+    int nsegs = network->number_of_segs();
+    bool updated = false;
+
+    for (int i = 0; i < nsegs; i++) {
+        if (network->segs[i].burg.norm2() < 1e-20) continue;
+        if (network->segs[i].plane.norm2() < 1e-10) continue;
+
+        int n1 = network->segs[i].n1, n2 = network->segs[i].n2;
+        bool c1 = (network->nodes[n1].constraint == INCLUSION_NODE);
+        bool c2 = (network->nodes[n2].constraint == INCLUSION_NODE);
+        if (!c1 && !c2) continue;
+
+        // Use the c9 face node as anchor (na); skip if na is already on an edge
+        int na = c1 ? n1 : n2, nb = c1 ? n2 : n1;
+        if (inclusion_on_edge(network->nodes[na].pos, 2.0)) continue;
+
+        // Nearest inclusion center to na
+        int incl = 0; double bestd = 1e30;
+        for (int k = 0; k < (int)inclusion_centers.size(); k++) {
+            Vec3 dd = network->nodes[na].pos - inclusion_centers[k];
+            double q = dot(dd, dd);
+            if (q < bestd) { bestd = q; incl = k; }
+        }
+        Vec3 C = inclusion_centers[incl];
+        Vec3 l1 = network->cell.pbc_position(C, network->nodes[na].pos) - C;
+        Vec3 l2 = network->cell.pbc_position(C, network->nodes[nb].pos) - C;
+        Vec3 n  = network->segs[i].plane.normalized();
+
+        Vec3 xcut;
+        if (!inclusion_segment_edge_cross(l1, l2, n, half, xcut)) continue;
+
+        Vec3 pos = network->cell.pbc_fold(C + xcut);
+
+        if ((pos - network->nodes[na].pos).norm() < min_sep) continue;
+        if ((pos - network->nodes[nb].pos).norm() < min_sep) continue;
+
+        int nnew = network->split_seg(i, pos);
+        if (nnew < 0) continue;
+        network->nodes[nnew].constraint = INCLUSION_NODE;
+        network->nodes[nnew].v = Vec3(0.0);
+        updated = true;
+    }
+
+    if (updated) {
+        network->generate_connectivity();
+        network->update_ptr();
     }
 }
 

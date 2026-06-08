@@ -124,9 +124,7 @@ int SerialDisNet::split_seg(int i, const Vec3& pos, bool update_conn)
     if (oprec)
         oprec->add_op(OpRec::SplitSeg(nodes[n1].tag, nodes[n2].tag, pos, nodes[nnew].tag));
     
-    // ★ 诊断:记录新节点的产生(只打印不改逻辑)
-    ExaDiS_log("[NODE_ADD] split_seg new_node=%d pos=(%.0f,%.0f,%.0f) constraint=%d total_nodes=%d\n",
-               nnew, pos.x, pos.y, pos.z, nodes[nnew].constraint, (int)nodes.size());
+    // [NODE_ADD] diagnostic print removed — insert_edge_nodes calls split_seg frequently
     
     return nnew;
 }

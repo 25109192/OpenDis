@@ -91,6 +91,22 @@ public:
     return normal;
     }
 
+    // True if pos is on a cube edge (two or more axes near ±half).
+    bool inclusion_on_edge(const Vec3& pos, double edge_tol) const {
+        if (inclusion_centers.empty()) return false;
+        int best = 0; double bestd = 1e30;
+        for (int k = 0; k < (int)inclusion_centers.size(); k++) {
+            Vec3 d = pos - inclusion_centers[k];
+            double dd = dot(d, d);
+            if (dd < bestd) { bestd = dd; best = k; }
+        }
+        Vec3 l = pos - inclusion_centers[best];
+        double half = inclusion_a_dim * 0.5;
+        int near = (fabs(l.x) >= half-edge_tol) + (fabs(l.y) >= half-edge_tol)
+                 + (fabs(l.z) >= half-edge_tol);
+        return near >= 2;
+    }
+
     // 从位置现算最近单面法向量;取代 surface_node_normal 映射,保证僵尸节点也被约束
     int inclusion_single_face_normal(const Vec3& pos, Vec3& normal) const {
         normal = Vec3(0.0);
@@ -144,6 +160,7 @@ public:
     void check_surface_node_transition(SerialDisNet* network);
     void enforce_edge_continuity(SerialDisNet* network);
     void correct_surface_node_positions(SerialDisNet* network);
+    void insert_edge_nodes(SerialDisNet* network);
     // 记录上一步结束时在夹杂内部的节点 Tag ID
     // 用于增量式处理：只对本步新进入夹杂的节点插入表面节点
     std::unordered_map<long long, bool> node_was_inside;

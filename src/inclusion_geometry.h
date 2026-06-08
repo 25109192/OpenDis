@@ -125,6 +125,72 @@ Vec3 inclusion_project_glide_line(const Vec3& local, const int face_sign[3],
     return p;
 }
 
+// Check if segment l1→l2 (local coords) crosses any edge of the cube face that l1 is on.
+// If yes, sets xcut = the π∩E intersection (glide plane through l1 ∩ crossed cube edge)
+// and returns true. n = glide-plane normal; half = inclusion_a_dim * 0.5.
+KOKKOS_INLINE_FUNCTION
+bool inclusion_segment_edge_cross(const Vec3& l1, const Vec3& l2, const Vec3& n,
+                                  double half, Vec3& xcut) {
+    Vec3 seg = l2 - l1;
+    if (dot(seg, seg) < 1e-12) return false;
+
+    // Face axis of l1 (axis with largest |component|)
+    int fa = 0;
+    if (fabs(l1[1]) > fabs(l1[fa])) fa = 1;
+    if (fabs(l1[2]) > fabs(l1[fa])) fa = 2;
+    int fb = (fa+1)%3, fc = (fa+2)%3;
+    double fv = (l1[fa] >= 0.0) ? half : -half;
+
+    double d = dot(n, l1);  // glide-plane value: n·x = d
+    bool found = false;
+    double bestu = 2.0;
+
+    int fi_list[2] = {fb, fc};
+    for (int ii = 0; ii < 2; ii++) {
+        int fi = fi_list[ii];
+        int fo = fi_list[1-ii];
+        for (int se = -1; se <= 1; se += 2) {
+            double ev = se * half;
+            double dfi = seg[fi];
+            if (fabs(dfi) < 1e-12) continue;
+            double t = (ev - l1[fi]) / dfi;
+            if (t <= 0.0 || t >= 1.0) continue;  // crossing not strictly between endpoints
+            // Compute π∩E: x[fa]=fv, x[fi]=ev, solve x[fo] from glide plane
+            Vec3 xc; xc[fa] = fv; xc[fi] = ev;
+            if (fabs(n[fo]) > 1e-9)
+                xc[fo] = (d - n[fa]*fv - n[fi]*ev) / n[fo];
+            else
+                xc[fo] = l1[fo] + t*seg[fo];  // fallback: linear interp
+            if (xc[fo] >  half) xc[fo] =  half;
+            if (xc[fo] < -half) xc[fo] = -half;
+            if (t < bestu) { bestu = t; xcut = xc; found = true; }
+        }
+    }
+    return found;
+}
+
+// Re-project an edge/corner c9 node onto π∩E each step (keeps it geometrically exact).
+// Two axes of local are "near ±half" (edge axes); the free axis is solved from the
+// glide plane n·x = n·local.
+KOKKOS_INLINE_FUNCTION
+Vec3 inclusion_project_edge_point(const Vec3& local, double half, const Vec3& n) {
+    // Free axis = the one with smallest |local|
+    int fo = 0;
+    if (fabs(local[1]) < fabs(local[fo])) fo = 1;
+    if (fabs(local[2]) < fabs(local[fo])) fo = 2;
+    int fa = (fo+1)%3, fb = (fo+2)%3;
+    double va = (local[fa] >= 0.0) ? half : -half;
+    double vb = (local[fb] >= 0.0) ? half : -half;
+    Vec3 p; p[fa] = va; p[fb] = vb;
+    if (fabs(n[fo]) > 1e-9)
+        p[fo] = (dot(n, local) - n[fa]*va - n[fb]*vb) / n[fo];
+    else
+        p[fo] = local[fo];
+    if (p[fo] >  half) p[fo] =  half;
+    if (p[fo] < -half) p[fo] = -half;
+    return p;
+}
+
 } // namespace ExaDiS
 
 #endif

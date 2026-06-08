@@ -660,8 +660,9 @@ void ExaDiSApp::step(Control& ctrl)
         system->insert_surface_nodes(net);
         system->check_surface_node_transition(net);
         system->update_inclusion_constraints(net);
-        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled — 1D glide-line projection should anchor edges at box edges naturally
-        system->correct_surface_node_positions(net);  // ← 新加
+        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled
+        system->correct_surface_node_positions(net);
+        system->insert_edge_nodes(net);
     }
 
     oprec_save_integration(ctrl);
@@ -693,8 +694,9 @@ void ExaDiSApp::step(Control& ctrl)
         system->insert_surface_nodes(net);
         system->check_surface_node_transition(net);
         system->update_inclusion_constraints(net);
-        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled — 1D glide-line projection should anchor edges at box edges naturally
+        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled
         system->correct_surface_node_positions(net);
+        system->insert_edge_nodes(net);
     }
     // Update stress
     update_mechanics(ctrl);
