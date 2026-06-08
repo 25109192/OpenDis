@@ -324,11 +324,8 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
     // 第一步：扫描节点，捕获在内部、表面上、或表面外极近的节点
     // ============================================================
     for (int i = 0; i < nnodes; ++i) {
-        if (network->nodes[i].constraint == INCLUSION_NODE || 
+        if (network->nodes[i].constraint == INCLUSION_NODE ||
             network->nodes[i].constraint == PINNED_NODE) continue;
-        long long key = network->nodes[i].tag.domain * 1000000LL
-                      + network->nodes[i].tag.index;
-        if (surface_node_normal.count(key) > 0) continue;
 
         Vec3 pos = network->nodes[i].pos;
 
@@ -385,16 +382,13 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         // 选最近单面 + 投影（统一 helper）
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
-        Vec3 best_normal = inclusion_normal(face_sign);
         Vec3 best_proj   = inclusion_project_capture(local, face_sign, half, 30.0); // 30b margin
 
-        // ---- 投影 + PIN + 登记 ----
+        // ---- 投影 + PIN ----
         Vec3 old_pos_upd = network->nodes[i].pos;
         network->nodes[i].pos        = network->cell.pbc_fold(c + best_proj);
         network->nodes[i].constraint = INCLUSION_NODE;
         network->nodes[i].v          = Vec3(0.0);
-        surface_node_normal[key]     = best_normal;
-        surface_node_incl_id[key]    = detected_incl;
         { double jmp = (network->nodes[i].pos - old_pos_upd).norm();
           if (jmp > 500.0)
             ExaDiS_log("[FIX] src=update tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
@@ -609,22 +603,14 @@ Vec3 System::get_face_normal(const Vec3& hit, const Vec3& center, double half) c
 void System::project_surface_node_velocity(SerialDisNet* network)
 {
     if (!inclusion_enabled) return;
-    if (surface_node_normal.empty()) return;
 
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
-        long long key = network->nodes[i].tag.domain * 1000000LL
-                      + network->nodes[i].tag.index;
-        auto it = surface_node_normal.find(key);
-        if (it == surface_node_normal.end()) continue;
-        Vec3 normal = it->second;
+        if (network->nodes[i].constraint != INCLUSION_NODE) continue;
+        Vec3 normal;
+        if (inclusion_single_face_normal(network->nodes[i].pos, normal) < 0) continue;
         Vec3& v = network->nodes[i].v;
-        int ncomp = (fabs(normal.x)>0.5) + (fabs(normal.y)>0.5) + (fabs(normal.z)>0.5);
-        if (ncomp >= 2) {
-            v = Vec3(0.0);
-        } else {
-            v = v - dot(v, normal) * normal;
-        }
+        v = v - dot(v, normal) * normal;
     }
 }
 
@@ -791,11 +777,6 @@ void System::insert_surface_nodes(SerialDisNet* network)
         long long new_key = network->nodes[new_node].tag.domain * 1000000LL
                           + network->nodes[new_node].tag.index;
         node_was_inside[new_key] = true;
-
-        // 记录表面节点的面法向量和夹杂编号
-        Vec3 face_normal = get_face_normal(hit_pos, inclusion_centers[incl_id], half);
-        surface_node_normal[new_key]  = face_normal;
-        surface_node_incl_id[new_key] = incl_id;
     }
  
     if (new_surface_nodes > 0) {
@@ -1267,159 +1248,7 @@ void System::detect_orowan_loop(SerialDisNet* network)
  *-------------------------------------------------------------------------*/
 void System::enforce_edge_continuity(SerialDisNet* network)
 {
-    if (!inclusion_enabled) return;
-    if (surface_node_normal.empty()) return;
-
-    double half = inclusion_a_dim * 0.5;
-
-    struct EdgeSplit {
-        int  seg_id;
-        Vec3 new_pos;
-        Vec3 new_normal;
-        int  incl_id;
-    };
-    std::vector<EdgeSplit> to_split;
-
-    int nsegs = network->number_of_segs();
-    for (int i = 0; i < nsegs; ++i) {
-        int n1 = network->segs[i].n1;
-        int n2 = network->segs[i].n2;
-
-        long long key1 = network->nodes[n1].tag.domain * 1000000LL
-                       + network->nodes[n1].tag.index;
-        long long key2 = network->nodes[n2].tag.domain * 1000000LL
-                       + network->nodes[n2].tag.index;
-
-        auto it1 = surface_node_normal.find(key1);
-        auto it2 = surface_node_normal.find(key2);
-        if (it1 == surface_node_normal.end()) continue;
-        if (it2 == surface_node_normal.end()) continue;
-
-        auto incl_it1 = surface_node_incl_id.find(key1);
-        auto incl_it2 = surface_node_incl_id.find(key2);
-        if (incl_it1 == surface_node_incl_id.end()) continue;
-        if (incl_it2 == surface_node_incl_id.end()) continue;
-        if (incl_it1->second != incl_it2->second) continue;
-
-        Vec3 normal1 = it1->second;
-        Vec3 normal2 = it2->second;
-        double dotn = dot(normal1, normal2);
-        if (dotn > 0.5) continue;
-
-        Vec3 p1 = network->nodes[n1].pos;
-        Vec3 p2 = network->cell.pbc_position(p1, network->nodes[n2].pos);
-
-        int incl_id = incl_it1->second;
-        Vec3 center = inclusion_centers[incl_id];
-
-        Vec3 mid = 0.5 * (p1 + p2);
-        Vec3 mid_local = mid - center;
-        bool mid_in_cube = (fabs(mid_local.x) < half &&
-                            fabs(mid_local.y) < half &&
-                            fabs(mid_local.z) < half);
-        if (!mid_in_cube) continue;
-
-        int axis1 = -1, axis2 = -1;
-        double sign1 = 0.0, sign2 = 0.0;
-        int nz1 = 0, nz2 = 0;
-        for (int k = 0; k < 3; ++k) {
-            if (fabs(normal1[k]) > 0.9) {
-                axis1 = k;
-                sign1 = (normal1[k] > 0.0) ? 1.0 : -1.0;
-                nz1++;
-            }
-            if (fabs(normal2[k]) > 0.9) {
-                axis2 = k;
-                sign2 = (normal2[k] > 0.0) ? 1.0 : -1.0;
-                nz2++;
-            }
-        }
-        if (nz1 != 1 || nz2 != 1) continue;
-        if (axis1 == axis2) continue;
-
-        int axis_free = 3 - axis1 - axis2;
-
-        // ★ 晶体学严格化:棱节点严格生成在 "段的滑移面 ∩ 夹杂棱" 的交点上
-        // 旧逻辑:沿棱方向取段中点投影(几何近似)
-        // 新逻辑:求滑移面和棱的交点(晶体学严格)
-
-        // 棱方向:沿 axis_free 轴
-        Vec3 edge_dir(0.0);
-        edge_dir[axis_free] = 1.0;
-
-        // 棱上一点 P0:axis1 和 axis2 锁定在面上,axis_free 取夹杂中心
-        Vec3 P0;
-        P0[axis1]    = center[axis1] + sign1 * half;
-        P0[axis2]    = center[axis2] + sign2 * half;
-        P0[axis_free] = center[axis_free];
-
-        // 段的滑移面(实验室坐标系,与 P0/edge_dir 同坐标系)
-        Vec3 glide_n = network->segs[i].plane;
-
-        // 段上一点:用段中点
-        Vec3 X0 = mid;
-
-        // 求交点:解 glide_n · (P0 + t·edge_dir - X0) = 0
-        double denom = dot(glide_n, edge_dir);
-
-        Vec3 new_pos;
-        if (fabs(denom) < 1e-10) {
-            // 退化:滑移面平行于棱(几乎不会发生),fallback 到旧逻辑
-            new_pos[axis1]    = center[axis1] + sign1 * half;
-            new_pos[axis2]    = center[axis2] + sign2 * half;
-            new_pos[axis_free] = mid[axis_free];
-        } else {
-            double t = dot(glide_n, X0 - P0) / denom;
-
-            // 限制 t 在棱的范围内 [-half, +half]
-            if (t < -half) t = -half;
-            if (t >  half) t =  half;
-
-            new_pos[axis1]    = center[axis1] + sign1 * half;
-            new_pos[axis2]    = center[axis2] + sign2 * half;
-            new_pos[axis_free] = center[axis_free] + t;
-        }
-        Vec3 new_normal = normal1 + normal2;
-        double nmag = new_normal.norm();
-        if (nmag > 1e-10) new_normal = (1.0 / nmag) * new_normal;
-        else new_normal = normal1;
-
-        to_split.push_back({i, new_pos, new_normal, incl_id});
-    }
-
-    if (to_split.empty()) return;
-
-    std::sort(to_split.begin(), to_split.end(),
-              [](const EdgeSplit& a, const EdgeSplit& b) {
-                  return a.seg_id > b.seg_id;
-              });
-
-    int n_inserted = 0;
-    for (const auto& info : to_split) {
-        if (info.seg_id >= network->number_of_segs()) continue;
-
-        int new_node = network->split_seg(info.seg_id,
-                                          network->cell.pbc_fold(info.new_pos));
-        if (new_node < 0) continue;
-
-        network->nodes[new_node].constraint = INCLUSION_NODE;
-        network->nodes[new_node].v          = Vec3(0.0);
-
-        long long new_key = network->nodes[new_node].tag.domain * 1000000LL
-                          + network->nodes[new_node].tag.index;
-        surface_node_normal[new_key]  = info.new_normal;
-        surface_node_incl_id[new_key] = info.incl_id;
-
-
-        n_inserted++;
-    }
-
-    if (n_inserted > 0) {
-        network->generate_connectivity();
-        network->update_ptr();
-        ExaDiS_log("Orowan: edge continuity — inserted %d nodes on inclusion edges\n",
-                   n_inserted);
-    }
+    return; // retired: no longer inserts map-tracked edge nodes
 }
 /*---------------------------------------------------------------------------
  *
@@ -1437,18 +1266,20 @@ void System::correct_surface_node_positions(SerialDisNet* network)
 {
     if (!inclusion_enabled) return;
     if (network == nullptr) return;
-    if (surface_node_incl_id.empty()) return;
+    if (inclusion_centers.empty()) return;
 
     double half = inclusion_a_dim * 0.5;
 
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
-        long long key = network->nodes[i].tag.domain * 1000000LL
-                      + network->nodes[i].tag.index;
-        auto it_incl = surface_node_incl_id.find(key);
-        if (it_incl == surface_node_incl_id.end()) continue;
-        int incl_id = it_incl->second;
-        if (incl_id < 0 || incl_id >= (int)inclusion_centers.size()) continue;
+        if (network->nodes[i].constraint != INCLUSION_NODE) continue;
+        int incl_id = -1; double bestd2 = 1e30;
+        for (int k = 0; k < (int)inclusion_centers.size(); k++) {
+            Vec3 d = network->nodes[i].pos - inclusion_centers[k];
+            double dd = dot(d, d);
+            if (dd < bestd2) { bestd2 = dd; incl_id = k; }
+        }
+        if (incl_id < 0) continue;
         Vec3 center = inclusion_centers[incl_id];
 
         // Realtime classify: face assignment from CURRENT position, never stale stored normal.
@@ -1456,7 +1287,6 @@ void System::correct_surface_node_positions(SerialDisNet* network)
         Vec3 local = network->cell.pbc_position(center, old_pos) - center;
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
-        surface_node_normal[key] = inclusion_normal(face_sign);  // keep map consistent for mobility/enforce
 
         // Stage 6: get this node's glide plane from a connected non-ghost segment,
         // then project position onto the (face ∩ glide-plane) 1D line so the node

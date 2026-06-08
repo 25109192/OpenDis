@@ -91,6 +91,27 @@ public:
     return normal;
     }
 
+    // 从位置现算最近单面法向量;取代 surface_node_normal 映射,保证僵尸节点也被约束
+    int inclusion_single_face_normal(const Vec3& pos, Vec3& normal) const {
+        normal = Vec3(0.0);
+        if (inclusion_centers.empty()) return -1;
+        int best = 0; double bestd = 1e30;
+        for (int k = 0; k < (int)inclusion_centers.size(); k++) {
+            Vec3 d = pos - inclusion_centers[k];
+            double dd = dot(d, d);
+            if (dd < bestd) { bestd = dd; best = k; }
+        }
+        Vec3 local = pos - inclusion_centers[best];
+        double ax = fabs(local.x), ay = fabs(local.y), az = fabs(local.z);
+        if (ax >= ay && ax >= az)
+            normal = Vec3(local.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0);
+        else if (ay >= ax && ay >= az)
+            normal = Vec3(0.0, local.y >= 0.0 ? 1.0 : -1.0, 0.0);
+        else
+            normal = Vec3(0.0, 0.0, local.z >= 0.0 ? 1.0 : -1.0);
+        return best;
+    }
+
     Params params;
     Crystal crystal;
     
@@ -126,8 +147,6 @@ public:
     // 记录上一步结束时在夹杂内部的节点 Tag ID
     // 用于增量式处理：只对本步新进入夹杂的节点插入表面节点
     std::unordered_map<long long, bool> node_was_inside;
-    std::unordered_map<long long, Vec3> surface_node_normal;   // 表面节点所在面的法向量
-    std::unordered_map<long long, int>  surface_node_incl_id;  // 表面节点属于哪个夹杂
     OpRec* oprec = nullptr;
     
     int num_ranks;

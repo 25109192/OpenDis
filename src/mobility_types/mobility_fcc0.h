@@ -164,14 +164,9 @@ struct MobilityFCC0
 
                 // ★ 晶体学严格化:表面 PIN 节点投影到 "滑移面 ∩ 夹杂表面" 交线方向
                 if (is_surface_pin) {
-                    long long key = (long long)nodes[i].tag.domain * 1000000LL
-                                  + (long long)nodes[i].tag.index;
-                    auto it = system->surface_node_normal.find(key);
-                    if (it != system->surface_node_normal.end()) {
-                        Vec3 n_surface = it->second;
-                        
+                    Vec3 n_surface;
+                    if (system->inclusion_single_face_normal(nodes[i].pos, n_surface) >= 0) {
                         if (ngc == 1) {
-                            // 单一滑移面:严格投影到交线方向 l
                             Vec3 n_glide = norm[0];
                             Vec3 l = cross(n_glide, n_surface);
                             double l_norm = l.norm();
@@ -179,14 +174,11 @@ struct MobilityFCC0
                                 l = (1.0 / l_norm) * l;
                                 vi = dot(vi, l) * l;
                             } else {
-                                // 退化:滑移面与夹杂面接近平行,fallback
                                 vi = vi - dot(vi, n_surface) * n_surface;
                             }
                         } else {
-                            // ngc >= 2:节点已被多滑移面锁定,fallback 到切平面投影
                             vi = vi - dot(vi, n_surface) * n_surface;
                         }
-                        
                         if (vi.norm2() < 1e-30) vi = Vec3(0.0);
                     }
                 }
