@@ -169,7 +169,7 @@ struct MobilityFCC0
                     } else {
                         Vec3 n_surface;
                         if (system->inclusion_single_face_normal(nodes[i].pos, n_surface) >= 0) {
-                            if (ngc == 1) {
+                            if (ngc >= 1) {   // ngc>=2: 也用 norm[0] 的面∩平面线,和位置约束一致(刻意近似)
                                 Vec3 n_glide = norm[0];
                                 Vec3 l = cross(n_glide, n_surface);
                                 double l_norm = l.norm();

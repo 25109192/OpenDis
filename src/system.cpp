@@ -611,10 +611,28 @@ void System::project_surface_node_velocity(SerialDisNet* network)
             network->nodes[i].v = Vec3(0.0);
             continue;
         }
-        Vec3 normal;
-        if (inclusion_single_face_normal(network->nodes[i].pos, normal) < 0) continue;
+        Vec3 n_surface;
+        if (inclusion_single_face_normal(network->nodes[i].pos, n_surface) < 0) continue;
+
+        // Same connected non-ghost segment plane that correct_surface_node_positions
+        // uses → velocity stays on the SAME 1D (face ∩ glide-plane) line as the position.
+        Vec3 glide_n(0.0); bool has_glide = false;
+        for (int j = 0; j < network->conn[i].num; j++) {
+            int s = network->conn[i].seg[j];
+            if (network->segs[s].burg.norm2() < 1e-20) continue;
+            if (network->segs[s].plane.norm2() < 1e-10) continue;
+            glide_n = network->segs[s].plane.normalized(); has_glide = true; break;
+        }
+
         Vec3& v = network->nodes[i].v;
-        v = v - dot(v, normal) * normal;
+        if (has_glide) {
+            Vec3 l = cross(glide_n, n_surface);
+            double ln = l.norm();
+            if (ln > 1e-6) { l = (1.0/ln) * l; v = dot(v, l) * l; }
+            else           { v = v - dot(v, n_surface) * n_surface; }
+        } else {
+            v = v - dot(v, n_surface) * n_surface;
+        }
     }
 }
 
@@ -1310,7 +1328,7 @@ void System::correct_surface_node_positions(SerialDisNet* network)
         int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
                       + (fabs(local.z) >= half-2.0);
         Vec3 proj;
-        if (near_half >= 2 && has_glide)
+        if (near_half >= 2)
             proj = inclusion_project_edge_point(local, half, glide_n);
         else
             proj = has_glide

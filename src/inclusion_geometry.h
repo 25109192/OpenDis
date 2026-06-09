@@ -173,19 +173,18 @@ bool inclusion_segment_edge_cross(const Vec3& l1, const Vec3& l2, const Vec3& n,
 // Two axes of local are "near ±half" (edge axes); the free axis is solved from the
 // glide plane n·x = n·local.
 KOKKOS_INLINE_FUNCTION
-Vec3 inclusion_project_edge_point(const Vec3& local, double half, const Vec3& n) {
-    // Free axis = the one with smallest |local|
+Vec3 inclusion_project_edge_point(const Vec3& local, double half, const Vec3& /*n*/) {
+    // Pin the two axes nearest ±half to the cube edge; HOLD the along-edge
+    // (free) axis at its current value (clamped). Edge/corner nodes are pinned
+    // (v=0), so their position must NOT be re-solved/drift each step.
     int fo = 0;
     if (fabs(local[1]) < fabs(local[fo])) fo = 1;
     if (fabs(local[2]) < fabs(local[fo])) fo = 2;
     int fa = (fo+1)%3, fb = (fo+2)%3;
-    double va = (local[fa] >= 0.0) ? half : -half;
-    double vb = (local[fb] >= 0.0) ? half : -half;
-    Vec3 p; p[fa] = va; p[fb] = vb;
-    if (fabs(n[fo]) > 1e-9)
-        p[fo] = (dot(n, local) - n[fa]*va - n[fb]*vb) / n[fo];
-    else
-        p[fo] = local[fo];
+    Vec3 p;
+    p[fa] = (local[fa] >= 0.0) ? half : -half;
+    p[fb] = (local[fb] >= 0.0) ? half : -half;
+    p[fo] = local[fo];
     if (p[fo] >  half) p[fo] =  half;
     if (p[fo] < -half) p[fo] = -half;
     return p;
