@@ -1437,11 +1437,14 @@ void System::correct_surface_node_positions(SerialDisNet* network)
             has_glide = true;
             break;
         }
-        // Sub-type by position: two axes near ±half → edge/corner node, pin to π∩E.
+        // Sub-type by position: two axes near ±half → edge/corner node.
+        // 流过式:只有静止(v≈0,真拐角/被压向内部)才钉在棱上(edge_point 保 d);
+        // 正在流动的棱点(v≠0)改投到它正落上的主导面 glide-line,完成换面。
         int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
                       + (fabs(local.z) >= half-2.0);
+        bool resting = (network->nodes[i].v.norm2() < 1e-20);
         Vec3 proj;
-        if (near_half >= 2)
+        if (near_half >= 2 && resting)
             proj = inclusion_project_edge_point(local, half, glide_n);
         else
             proj = has_glide
