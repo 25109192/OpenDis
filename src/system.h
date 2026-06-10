@@ -107,6 +107,50 @@ public:
         return near >= 2;
     }
 
+    // Flow-through edge velocity: node sits on a cube edge (>=2 axes near ±half).
+    // Among the touched faces, pick the one the glide-plane velocity vi drives the
+    // node INTO (every *other* pinned axis de-pins, moving toward the interior),
+    // and return vi projected onto that face's slip-line l=cross(glide_n,n_face).
+    // l ⊥ glide_n so motion preserves the slip-plane offset d. Returns false if no
+    // face qualifies (true corner / pressed into inclusion) -> caller pins (vi=0).
+    bool inclusion_edge_flow_velocity(const Vec3& pos, const Vec3& glide_n,
+                                      const Vec3& vi, double edge_tol, Vec3& vout) const {
+        if (inclusion_centers.empty()) return false;
+        int best = 0; double bestd = 1e30;
+        for (int k = 0; k < (int)inclusion_centers.size(); k++) {
+            Vec3 d = pos - inclusion_centers[k];
+            double dd = dot(d, d);
+            if (dd < bestd) { bestd = dd; best = k; }
+        }
+        Vec3 local = pos - inclusion_centers[best];
+        double half = inclusion_a_dim * 0.5;
+        int pin[3]; int npin = 0;
+        for (int k = 0; k < 3; k++)
+            if (fabs(local[k]) >= half - edge_tol) pin[npin++] = k;
+        if (npin < 2) return false;
+        double best_speed = 0.0; bool found = false;
+        for (int ii = 0; ii < npin; ii++) {
+            int f = pin[ii];                          // face to stay on
+            Vec3 n_f(0.0); n_f[f] = (local[f] >= 0.0) ? 1.0 : -1.0;
+            Vec3 l = cross(glide_n, n_f);
+            double ln = l.norm();
+            if (ln < 1e-9) continue;
+            l = (1.0/ln) * l;
+            Vec3 v = dot(vi, l) * l;
+            bool into = true;                         // every other pinned axis must de-pin
+            for (int jj = 0; jj < npin; jj++) {
+                if (jj == ii) continue;
+                int g = pin[jj];
+                double s = (local[g] >= 0.0) ? 1.0 : -1.0;
+                if (v[g] * s >= 0.0) { into = false; break; }
+            }
+            if (!into) continue;
+            double sp = v.norm();
+            if (sp > best_speed) { best_speed = sp; vout = v; found = true; }
+        }
+        return found;
+    }
+
     // 从位置现算最近单面法向量;取代 surface_node_normal 映射,保证僵尸节点也被约束
     int inclusion_single_face_normal(const Vec3& pos, Vec3& normal) const {
         normal = Vec3(0.0);

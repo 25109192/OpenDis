@@ -165,7 +165,13 @@ struct MobilityFCC0
                 // ★ 晶体学严格化:表面 PIN 节点投影到 "滑移面 ∩ 夹杂表面" 交线方向
                 if (is_surface_pin) {
                     if (system->inclusion_on_edge(nodes[i].pos, 2.0)) {
-                        vi = Vec3(0.0);  // edge/corner node: fully pinned
+                        // flow-through: 棱点不再钉死,投影到力推它进入的那个面的滑移线
+                        Vec3 vflow;
+                        if (ngc >= 1 &&
+                            system->inclusion_edge_flow_velocity(nodes[i].pos, norm[0], vi, 2.0, vflow))
+                            vi = vflow;
+                        else
+                            vi = Vec3(0.0);  // 真·拐角 / 被压向夹杂内部:暂停
                     } else {
                         Vec3 n_surface;
                         if (system->inclusion_single_face_normal(nodes[i].pos, n_surface) >= 0) {
