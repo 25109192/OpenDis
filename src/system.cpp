@@ -489,9 +489,56 @@ bool System::seg_cube_intersect(const Vec3& p_out, const Vec3& p_in,
     }
     local[nearest_axis] = nearest_sign * half;
     hit = center + local;
- 
+
     return true;
 }
+
+static inline void snap_to_nearest_face(Vec3& hit, const Vec3& center, double half) {
+    Vec3 local = hit - center;
+    double mind = 1e30; int axis = 0; double sign = 1.0;
+    for (int k = 0; k < 3; ++k) {
+        double dp = fabs(local[k] - half), dn = fabs(local[k] + half);
+        if (dp < mind) { mind = dp; axis = k; sign =  1.0; }
+        if (dn < mind) { mind = dn; axis = k; sign = -1.0; }
+    }
+    local[axis] = sign * half;
+    hit = center + local;
+}
+
+/*---------------------------------------------------------------------------
+ *    Function:     System::seg_cube_clip()
+ *    两端在外、弦横切夹杂(角/棱斜入射)时,返回切入点 hit_in 和切出点 hit_out。
+ *    要求 0 < tmin < tmax < 1(两端严格在外)。
+ *-------------------------------------------------------------------------*/
+bool System::seg_cube_clip(const Vec3& pa, const Vec3& pb,
+                           const Vec3& center, double half,
+                           Vec3& hit_in, Vec3& hit_out) const
+{
+    Vec3 d = pb - pa;
+    double tmin = 0.0, tmax = 1.0;
+    for (int k = 0; k < 3; ++k) {
+        double lo = center[k] - half;
+        double hi = center[k] + half;
+        if (fabs(d[k]) < 1e-14) {
+            if (pa[k] < lo || pa[k] > hi) return false;
+        } else {
+            double t1 = (lo - pa[k]) / d[k];
+            double t2 = (hi - pa[k]) / d[k];
+            if (t1 > t2) std::swap(t1, t2);
+            tmin = std::max(tmin, t1);
+            tmax = std::min(tmax, t2);
+            if (tmin > tmax) return false;
+        }
+    }
+    const double eps = 1e-6;
+    if (tmin <= eps || tmax >= 1.0 - eps || tmin >= tmax) return false;
+    hit_in  = pa + tmin * d;
+    hit_out = pa + tmax * d;
+    snap_to_nearest_face(hit_in,  center, half);
+    snap_to_nearest_face(hit_out, center, half);
+    return true;
+}
+
 /*---------------------------------------------------------------------------
  *
  *    Function:     System::snap_nodes_to_surface()
@@ -681,6 +728,8 @@ void System::insert_surface_nodes(SerialDisNet* network)
  
     struct SplitInfo { int seg_id; Vec3 hit_pos; int incl_id; };
     std::vector<SplitInfo> to_split;
+    struct ClipInfo { int seg_id; Vec3 hit_in; Vec3 hit_out; int incl_id; };
+    std::vector<ClipInfo> to_clip;
 
     int nsegs_initial = network->number_of_segs();
     for (int i = 0; i < nsegs_initial; i++) {
@@ -696,8 +745,22 @@ void System::insert_surface_nodes(SerialDisNet* network)
  
         bool p1_in = is_node_in_inclusion(p1);
         bool p2_in = is_node_in_inclusion(p2);
-        if (p1_in == p2_in) continue;
- 
+
+        if (p1_in && p2_in) continue;  // 全在内部,交给第二阶段删除
+
+        if (!p1_in && !p2_in) {
+            // 切入:两端在外、弦横切夹杂(角/棱斜入射)
+            for (int incl_idx = 0; incl_idx < (int)inclusion_centers.size(); incl_idx++) {
+                Vec3 hin, hout;
+                if (seg_cube_clip(p1, p2, inclusion_centers[incl_idx], half, hin, hout)) {
+                    to_clip.push_back({i, hin, hout, incl_idx});
+                    break;
+                }
+            }
+            continue;
+        }
+        // 以下:一端在内一端在外(原有单点逻辑)
+
         int inner_node  = p1_in ? n1 : n2;
         Vec3 p_in      = p1_in ? p1 : p2;
         Vec3 p_out_raw  = p1_in ? p2 : p1;
@@ -800,7 +863,41 @@ void System::insert_surface_nodes(SerialDisNet* network)
                           + network->nodes[new_node].tag.index;
         node_was_inside[new_key] = true;
     }
- 
+
+    // 切入双点捕获:两端在外、弦横切夹杂,在切入点和切出点各插一个 c9 节点
+    std::sort(to_clip.begin(), to_clip.end(),
+              [](const auto& a, const auto& b){ return a.seg_id > b.seg_id; });
+    for (auto& info : to_clip) {
+        int seg_id = info.seg_id;
+        if (seg_id >= network->number_of_segs()) continue;
+        int cn1 = network->segs[seg_id].n1;
+        int cn2 = network->segs[seg_id].n2;
+        if (network->nodes[cn1].constraint == INCLUSION_NODE &&
+            network->nodes[cn2].constraint == INCLUSION_NODE) continue;
+
+        int nodeIn = network->split_seg(seg_id, info.hit_in);
+        if (nodeIn < 0) continue;
+        int s2 = network->number_of_segs() - 1;  // split_seg 追加远端半段在末尾
+        int nodeOut = network->split_seg(s2, info.hit_out);
+
+        network->nodes[nodeIn].constraint = INCLUSION_NODE;
+        network->nodes[nodeIn].v = Vec3(0.0);
+        new_surface_nodes++;
+        long long kin = network->nodes[nodeIn].tag.domain * 1000000LL
+                      + network->nodes[nodeIn].tag.index;
+        node_was_inside[kin] = true;
+
+        if (nodeOut >= 0) {
+            network->nodes[nodeOut].constraint = INCLUSION_NODE;
+            network->nodes[nodeOut].v = Vec3(0.0);
+            new_surface_nodes++;
+            long long kout = network->nodes[nodeOut].tag.domain * 1000000LL
+                           + network->nodes[nodeOut].tag.index;
+            node_was_inside[kout] = true;
+        }
+        ExaDiS_log("Orowan: clip-in capture on seg %d (2 surface nodes)\n", seg_id);
+    }
+
     if (new_surface_nodes > 0) {
         network->generate_connectivity();
         network->update_ptr();

@@ -147,6 +147,9 @@ public:
     void insert_surface_nodes(SerialDisNet* network);
     bool seg_cube_intersect(const Vec3& p_out, const Vec3& p_in,
                         const Vec3& center, double half, Vec3& hit) const;
+    bool seg_cube_clip(const Vec3& pa, const Vec3& pb,
+                       const Vec3& center, double half,
+                       Vec3& hit_in, Vec3& hit_out) const;
     int orowan_loop_count = 0;
     void detect_orowan_loop(SerialDisNet* network);
     bool inclusion_initialized = false;
