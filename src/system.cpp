@@ -379,10 +379,26 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         Vec3 c = inclusion_centers[detected_incl];
         Vec3 local = pos - c;
 
-        // 选最近单面 + 投影（统一 helper）
+        // 选最近单面
         int face_sign[3];
         inclusion_nearest_face(local, face_sign);
-        Vec3 best_proj   = inclusion_project_capture(local, face_sign, half, 30.0); // 30b margin
+
+        // 捕获前节点仍在真实滑移面内(ExaDiS 滑移约束保证),沿面法向硬摁会把它
+        // 踢离真平面(Δd = glide_n[面轴]×穿透深度)。改用保 d 的 glide_line 投影,
+        // 落点严格在 (面 ∩ 滑移面) 交线上,与 correct_surface_node_positions 一致。
+        Vec3 glide_n(0.0);
+        bool has_glide = false;
+        for (int j = 0; j < network->conn[i].num; j++) {
+            int s = network->conn[i].seg[j];
+            if (network->segs[s].burg.norm2() < 1e-20) continue;   // skip ghost segs
+            if (network->segs[s].plane.norm2() < 1e-10) continue;  // skip planeless segs
+            glide_n = network->segs[s].plane.normalized();
+            has_glide = true;
+            break;
+        }
+        Vec3 best_proj = has_glide
+                       ? inclusion_project_glide_line(local, face_sign, half, glide_n)
+                       : inclusion_project_capture(local, face_sign, half, 30.0); // 无滑移面时退回
 
         // ---- 投影 + PIN ----
         Vec3 old_pos_upd = network->nodes[i].pos;
