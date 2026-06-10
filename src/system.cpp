@@ -1376,6 +1376,9 @@ void System::insert_edge_nodes(SerialDisNet* network)
         // Use the c9 face node as anchor (na); skip if na is already on an edge
         int na = c1 ? n1 : n2, nb = c1 ? n2 : n1;
         if (inclusion_on_edge(network->nodes[na].pos, 2.0)) continue;
+        // Both ends already on edges → segment is a chord bounded by surface
+        // nodes; inserting between them only plants spurious vertex nodes.
+        if (c1 && c2 && inclusion_on_edge(network->nodes[nb].pos, 2.0)) continue;
 
         // Nearest inclusion center to na
         int incl = 0; double bestd = 1e30;
@@ -1391,6 +1394,11 @@ void System::insert_edge_nodes(SerialDisNet* network)
 
         Vec3 xcut;
         if (!inclusion_segment_edge_cross(l1, l2, n, half, xcut)) continue;
+        // Crossing clamped onto a cube vertex (all 3 axes at ±half): degenerate
+        // corner insertion, would plant a spurious vertex node. Skip.
+        int xc_corner = (fabs(xcut.x) >= half-2.0) + (fabs(xcut.y) >= half-2.0)
+                      + (fabs(xcut.z) >= half-2.0);
+        if (xc_corner >= 3) continue;
 
         Vec3 pos = network->cell.pbc_fold(C + xcut);
 
