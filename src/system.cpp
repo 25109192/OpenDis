@@ -324,8 +324,11 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
     // 第一步：扫描节点，捕获在内部、表面上、或表面外极近的节点
     // ============================================================
     for (int i = 0; i < nnodes; ++i) {
-        if (network->nodes[i].constraint == INCLUSION_NODE ||
-            network->nodes[i].constraint == PINNED_NODE) continue;
+        if (network->nodes[i].constraint == PINNED_NODE) continue;
+        // 救而不删:已在表面的 c9 照旧跳过;漂进夹杂内部的 c9 不跳过,落到下面用
+        // glide_line 归位回表面(保 d),从而循环2 扫到时已无"内部端点",其段不被清零删掉。
+        if (network->nodes[i].constraint == INCLUSION_NODE &&
+            !is_node_strictly_inside_inclusion(network->nodes[i].pos)) continue;
 
         Vec3 pos = network->nodes[i].pos;
 
