@@ -435,6 +435,11 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         if ((n1_inside || n2_inside) && network->segs[i].burg.norm2() > 1e-20) {
             network->segs[i].burg = Vec3(0.0);
             ghost_segs++;
+            ExaDiS_log("[DELMARK uic-zero] (%.0f,%.0f,%.0f) c=%d -(%.0f,%.0f,%.0f) c=%d in1=%d in2=%d\n",
+                       network->nodes[n1].pos.x, network->nodes[n1].pos.y, network->nodes[n1].pos.z,
+                       network->nodes[n1].constraint,
+                       network->nodes[n2].pos.x, network->nodes[n2].pos.y, network->nodes[n2].pos.z,
+                       network->nodes[n2].constraint, (int)n1_inside, (int)n2_inside);
         }
     }
 
@@ -1003,6 +1008,14 @@ void System::insert_surface_nodes(SerialDisNet* network)
         }
  
         // 删除内部节点
+        for (int j = 0; j < network->conn[ci].num; j++) {
+            int nb = network->conn[ci].node[j];
+            ExaDiS_log("[DELMARK insSN-rmnode] ci=(%.0f,%.0f,%.0f) c=%d nb=(%.0f,%.0f,%.0f) c=%d\n",
+                       network->nodes[ci].pos.x, network->nodes[ci].pos.y, network->nodes[ci].pos.z,
+                       network->nodes[ci].constraint,
+                       network->nodes[nb].pos.x, network->nodes[nb].pos.y, network->nodes[nb].pos.z,
+                       network->nodes[nb].constraint);
+        }
         network->remove_nodes({ci});
         network->generate_connectivity();
         network->update_ptr();
@@ -1050,6 +1063,8 @@ void System::insert_surface_nodes(SerialDisNet* network)
                 if (seg_len > max_seg_len) {
                     ExaDiS_log("Warning: Orowan skipping too-long segment (%.0f b), "
                                "likely PBC issue\n", seg_len);
+                    ExaDiS_log("[DELMARK insSN-toolong] (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f) len=%.0f\n",
+                               pa.x, pa.y, pa.z, pb.x, pb.y, pb.z, seg_len);
                     continue;
                 }
  
@@ -1069,6 +1084,8 @@ void System::insert_surface_nodes(SerialDisNet* network)
  
                 if (crosses) {
                     ExaDiS_log("Orowan: two arms on opposite sides, not connecting\n");
+                    ExaDiS_log("[DELMARK insSN-nocon] (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)\n",
+                               pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
                     continue;
                 }
  

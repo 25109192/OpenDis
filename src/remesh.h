@@ -84,6 +84,11 @@ public:
             } else if (length < minseg && params.coarsen_mode == 0) {
                     if (network->nodes[n1].constraint == SURFACE_NODE ||
                         network->nodes[n2].constraint == SURFACE_NODE) continue;
+                if (network->nodes[n1].constraint == INCLUSION_NODE ||
+                    network->nodes[n2].constraint == INCLUSION_NODE)
+                    ExaDiS_log("[DELMARK remesh-merge] (%.0f,%.0f,%.0f) c=%d -(%.0f,%.0f,%.0f) c=%d len=%.0f\n",
+                               r1.x, r1.y, r1.z, network->nodes[n1].constraint,
+                               r2.x, r2.y, r2.z, network->nodes[n2].constraint, length);
                 // Merge segment nodes (coarsen)
                 if (system->crystal.enforce_glide_planes) {
                     // Do not remesh if node arms are on different planes
@@ -171,6 +176,13 @@ public:
                     }
                 }
                 
+                if (network->nodes[i].constraint == INCLUSION_NODE ||
+                    network->nodes[n0].constraint == INCLUSION_NODE ||
+                    network->nodes[n1].constraint == INCLUSION_NODE)
+                    ExaDiS_log("[DELMARK remesh-coarsen] i=(%.0f,%.0f,%.0f) c=%d n0=(%.0f,%.0f,%.0f) c=%d n1=(%.0f,%.0f,%.0f) c=%d\n",
+                               ri.x, ri.y, ri.z, network->nodes[i].constraint,
+                               r0.x, r0.y, r0.z, network->nodes[n0].constraint,
+                               r1.x, r1.y, r1.z, network->nodes[n1].constraint);
                 if (l0 < l1) {
                     // merge i into n0 at r0
                     network->merge_nodes_position(n0, i, r0, system->dEp);
@@ -224,8 +236,19 @@ public:
                 
             if (n1 == n2) {
                 // Zero-out Burgers vectors to remove the loop
-                for (int j = 0; j < links[i].size(); j++)
-                    network->segs[links[i][j]].burg = Vec3(0.0);
+                for (int j = 0; j < links[i].size(); j++) {
+                    int sj = links[i][j];
+                    if (network->nodes[network->segs[sj].n1].constraint == INCLUSION_NODE ||
+                        network->nodes[network->segs[sj].n2].constraint == INCLUSION_NODE)
+                        ExaDiS_log("[DELMARK remesh-smalloop] (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)\n",
+                                   network->nodes[network->segs[sj].n1].pos.x,
+                                   network->nodes[network->segs[sj].n1].pos.y,
+                                   network->nodes[network->segs[sj].n1].pos.z,
+                                   network->nodes[network->segs[sj].n2].pos.x,
+                                   network->nodes[network->segs[sj].n2].pos.y,
+                                   network->nodes[network->segs[sj].n2].pos.z);
+                    network->segs[sj].burg = Vec3(0.0);
+                }
                 nrem++;
             }
         }
