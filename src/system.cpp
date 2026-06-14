@@ -296,14 +296,12 @@ void System::plastic_strain()
  *
  *    Function:     System::update_inclusion_constraints()
  *
- *    第二阶段 2C 版本：
- *    扩展第一步的容差判据，能捕获：
- *    1. 严格在表面上的节点（含浮点级容差 TOL_INSIDE）
- *       —— Remesh bisect 中点的典型情形
- *    2. 表面外极近距离的节点（容差 TOL_OUTSIDE = 50 b）
- *       —— Collision 合并漂移的典型情形
+ *    接触式捕获：只捕获已进入或恰在夹杂内/表面的节点
+ *    （含浮点级容差 TOL_INSIDE）。不再做"表面外极近"的吸引式
+ *    捕获——位错该不该靠近、停在哪由力平衡决定，避免抢在弹性
+ *    排斥前把节点拽到面上造成同源环重合。
  *
- *    所有被捕获的节点都会被投影到最近的夹杂面、PIN、登记。
+ *    被捕获的节点会被投影到最近的夹杂面、PIN、登记。
  *
  *-------------------------------------------------------------------------*/
 void System::update_inclusion_constraints(SerialDisNet* network) {
@@ -314,11 +312,9 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
     static int total_fixed_count = 0;
     int new_fixed = 0;
     int new_projected = 0;
-    int new_outside = 0;
     double half = inclusion_a_dim * 0.5;
 
     const double TOL_INSIDE  = 1e-9 * inclusion_a_dim;  // 浮点级容差
-    const double TOL_OUTSIDE = 50.0;                      // 单位 b，外部容差
 
     // ============================================================
     // 第一步：扫描节点，捕获在内部、表面上、或表面外极近的节点
@@ -335,7 +331,6 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         // ---- 判定节点应该被处理的具体夹杂和情形 ----
         int  detected_incl  = -1;
         bool is_inside_or_on = false;
-        bool is_just_outside = false;
 
         // 第一遍：查找"在内或在表面"的夹杂
         for (int k = 0; k < (int)inclusion_centers.size(); k++) {
@@ -349,33 +344,7 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
             }
         }
 
-        // 第二遍：如果不在内/表面，查找"表面外极近"的情形
-        if (!is_inside_or_on) {
-            double near_dist = 1e30;
-            for (int k = 0; k < (int)inclusion_centers.size(); k++) {
-                Vec3 local = pos - inclusion_centers[k];
-                // 节点必须横向与某个夹杂"对齐"（在扩展范围内）
-                if (fabs(local.x) > half + TOL_OUTSIDE) continue;
-                if (fabs(local.y) > half + TOL_OUTSIDE) continue;
-                if (fabs(local.z) > half + TOL_OUTSIDE) continue;
-                
-                // 至少一个轴必须超出 half（否则实际在内部，第一遍已处理）
-                double dx_out = fabs(local.x) - half;
-                double dy_out = fabs(local.y) - half;
-                double dz_out = fabs(local.z) - half;
-                double max_out = fmax(dx_out, fmax(dy_out, dz_out));
-                if (max_out <= 0) continue;
-                if (max_out > TOL_OUTSIDE) continue;  // 漂得太远，不处理
-                
-                if (max_out < near_dist) {
-                    near_dist = max_out;
-                    detected_incl = k;
-                    is_just_outside = true;
-                }
-            }
-        }
-
-        if (!is_inside_or_on && !is_just_outside) continue;
+        if (!is_inside_or_on) continue;
         if (detected_incl < 0) continue;
 
         // ---- 找到最近面、计算投影位置和法向量 ----
@@ -416,7 +385,6 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
                        network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z); }
         new_fixed++;
         new_projected++;
-        if (is_just_outside) new_outside++;
     }
 
     // ============================================================
@@ -445,8 +413,8 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
 
     if (new_fixed > 0 || ghost_segs > 0) {
         total_fixed_count += new_fixed;
-        ExaDiS_log("Step: new fixed=%d (projected=%d, outside=%d), total fixed=%d, ghost segs zeroed=%d\n",
-                   new_fixed, new_projected, new_outside, total_fixed_count, ghost_segs);
+        ExaDiS_log("Step: new fixed=%d (projected=%d), total fixed=%d, ghost segs zeroed=%d\n",
+                   new_fixed, new_projected, total_fixed_count, ghost_segs);
         if (ghost_segs > 0) {
             ExaDiS_log("*** Orowan ring candidate: ghost segs = %d ***\n", ghost_segs);
         }
