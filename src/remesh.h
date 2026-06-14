@@ -144,7 +144,11 @@ public:
                 if (network->conn[i].num != 2) continue;
                 if (network->nodes[i].constraint == PINNED_NODE || network->nodes[i].constraint == SURFACE_NODE ||
                     network->nodes[i].constraint == CORNER_NODE) continue;
-                
+                // 单向 remesh 保护:棱/角上的 c9 不做被删候选,防其被合并进面节点
+                // 后两面节点直连成跨面弦穿夹杂。面 c9 仍可粗化(密度可控)。
+                if (network->nodes[i].constraint == INCLUSION_NODE &&
+                    system->inclusion_on_edge(network->nodes[i].pos, 2.0)) continue;
+
                 Vec3 ri = network->nodes[i].pos;
                 
                 // neighbor 0
