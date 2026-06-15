@@ -40,6 +40,15 @@ struct MobilityFCC0
             Mscrew = _Mscrew;
             vmax = _vmax;
         }
+        Params(Dict paramslist) {
+            for (auto const& [key, val] : paramslist) {
+                std::string name = dict::get_key(key);
+                if      (name == "Medge")  Medge  = dict::get_val<double>(val);
+                else if (name == "Mscrew") Mscrew = dict::get_val<double>(val);
+                else if (name == "vmax")   vmax   = dict::get_val<double>(val);
+                else ExaDiS_fatal("Error: unknown MobilityFCC0 input parameter %s\n", name.c_str());
+            }
+        }
     };
     
     MobilityFCC0(System* system, Params& params)
@@ -224,5 +233,7 @@ namespace MobilityType {
 }
 
 } // namespace ExaDiS
+
+EXADIS_MOBILITY(MobilityFCC0, FCC_0)
 
 #endif
