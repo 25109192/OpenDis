@@ -977,12 +977,6 @@ PYBIND11_MODULE(pyexadis, m) {
         .def("remove_nodes", &SerialDisNet::remove_nodes)
         .def("purge_network", &SerialDisNet::purge_network)
         .def("update", &SerialDisNet::update, "Update network memory after modifications");
-    
-    py::class_<SerialDisNet::DisLinks>(m, "DisLinks")
-        .def_readwrite("number_of_links", &SerialDisNet::DisLinks::number_of_links)
-        .def_readwrite("links_segs", &SerialDisNet::DisLinks::links_segs)
-        .def_readwrite("links_nodes", &SerialDisNet::DisLinks::links_nodes)
-        .def_readwrite("segs_link", &SerialDisNet::DisLinks::segs_link);
 
     py::class_<ExaDisNet>(m, "ExaDisNet")
         .def(py::init<>())
@@ -1004,7 +998,6 @@ PYBIND11_MODULE(pyexadis, m) {
         .def("set_velocities", &ExaDisNet::set_velocities, "Set the list of node velocities (vx,vy,vz) of the network")
         .def("write_data", &ExaDisNet::write_data, "Write network in ParaDiS format")
         .def("get_plastic_strain", &ExaDisNet::get_plastic_strain, "Returns plastic strain as computed since the last integration step")
-        .def("physical_links", &ExaDisNet::physical_links, "Returns the list of segments for each physical dislocation link")
         .def("_get_crystal", &ExaDisNet::get_crystal, "Get the Crystal object",
              py::return_value_policy::reference_internal)
         .def("_get_serial_network", &ExaDisNet::get_serial_network, "Get the SerialDisNet object",
