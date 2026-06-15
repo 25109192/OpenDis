@@ -1107,9 +1107,6 @@ PYBIND11_MODULE(pyexadis, m) {
     py::class_<MobilityType::BCC_0B::Params>(m, "Mobility_BCC_0B_Params")
         .def(py::init<double, double, double, double, double, double>(), py::arg("Medge"), py::arg("Mscrew"),
         py::arg("Mclimb"), py::arg("Fedge")=0.0, py::arg("Fscrew")=0.0, py::arg("vmax")=-1.0);
-    py::class_<MobilityType::BCC_NL::Params>(m, "Mobility_BCC_NL_Params")
-        .def(py::init<double, double, double, double, double, double>(), py::arg("tempK"), py::arg("vmax"),
-        py::arg("Peierls"), py::arg("Bscrew"), py::arg("B0edge"), py::arg("B1edge"));
     py::class_<MobilityType::FCC_0::Params>(m, "Mobility_FCC_0_Params")
         .def(py::init<double, double, double>(), py::arg("Medge"), py::arg("Mscrew"), py::arg("vmax")=-1.0);
     py::class_<MobilityType::FCC_0_FRIC::Params>(m, "Mobility_FCC_0_FRIC_Params")
@@ -1294,8 +1291,6 @@ PYBIND11_MODULE(pyexadis, m) {
     m.def("make_mobility_glide", &make_mobility<MobilityType::GLIDE>, "Instantiate a GLIDE mobility law",
           py::arg("params"), py::arg("mobparams"));
     m.def("make_mobility_bcc_0b", &make_mobility<MobilityType::BCC_0B>, "Instantiate a BCC_0B mobility law",
-          py::arg("params"), py::arg("mobparams"));
-    m.def("make_mobility_bcc_nl", &make_mobility<MobilityType::BCC_NL>, "Instantiate a BCC_NL mobility law",
           py::arg("params"), py::arg("mobparams"));
     m.def("make_mobility_fcc_0", &make_mobility<MobilityType::FCC_0>, "Instantiate a FCC_0 mobility law",
           py::arg("params"), py::arg("mobparams"));
