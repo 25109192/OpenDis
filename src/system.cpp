@@ -296,10 +296,10 @@ void System::plastic_strain()
  *
  *    Function:     System::update_inclusion_constraints()
  *
- *    接触式捕获：只捕获已进入或恰在夹杂内/表面的节点
- *    （含浮点级容差 TOL_INSIDE）。不再做"表面外极近"的吸引式
- *    捕获——位错该不该靠近、停在哪由力平衡决定，避免抢在弹性
- *    排斥前把节点拽到面上造成同源环重合。
+ *    接触式捕获：只捕获已进入、贴在表面、或表面外极近(接触余量
+ *    CONTACT_MARGIN=5b 内)的节点。不再做"表面外 50b 吸引式"捕获
+ *    ——位错该不该靠近、停在哪由力平衡决定，避免抢在弹性排斥前
+ *    把节点拽到面上造成同源环重合。
  *
  *    被捕获的节点会被投影到最近的夹杂面、PIN、登记。
  *
@@ -314,7 +314,7 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
     int new_projected = 0;
     double half = inclusion_a_dim * 0.5;
 
-    const double TOL_INSIDE  = 1e-9 * inclusion_a_dim;  // 浮点级容差
+    const double CONTACT_MARGIN = 5.0;  // 接触判定余量(b):抓贴面但小幅偏出的节点
 
     // ============================================================
     // 第一步：扫描节点，捕获在内部、表面上、或表面外极近的节点
@@ -335,9 +335,9 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         // 第一遍：查找"在内或在表面"的夹杂
         for (int k = 0; k < (int)inclusion_centers.size(); k++) {
             Vec3 local = pos - inclusion_centers[k];
-            if (fabs(local.x) <= half + TOL_INSIDE &&
-                fabs(local.y) <= half + TOL_INSIDE &&
-                fabs(local.z) <= half + TOL_INSIDE) {
+            if (fabs(local.x) <= half + CONTACT_MARGIN &&
+                fabs(local.y) <= half + CONTACT_MARGIN &&
+                fabs(local.z) <= half + CONTACT_MARGIN) {
                 is_inside_or_on = true;
                 detected_incl = k;
                 break;
