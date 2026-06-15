@@ -764,12 +764,13 @@ int HingeCollisionCriterion(real8 *L1ratio, const real8 *x1t,
     real8 L14 [3]= { x1t[0]-x4t[0], x1t[1]-x4t[1], x1t[2]-x4t[2] };
     real8 A = V3_DOT( L13, L13);
     real8 B = V3_DOT( L14, L14);
+    *L1ratio = V3_DOT( L13, L14) / sqrt(A) / sqrt(B); //Actually returning the cosine angle now
     
     real8 tol = tri ? 0.9 : 0.98;
-    if (V3_DOT( L13, L14) > tol * sqrt(A) * sqrt(B)) {
+    if (*L1ratio > tol) {
         collisionConditionIsMet = 1;
         //Based on the definition of hinge to have a small angle, we approximate the L1ratio as simply the ratio of length. 
-        *L1ratio = sqrt( A / B );
+        //*L1ratio = sqrt( A / B );
     }
     return collisionConditionIsMet;
 }
@@ -1622,6 +1623,10 @@ void CollisionRetroactive::retroactive_collision(System* system)
             //check_node_plane_violation(network, conn, mergenode2, "before merge collision");
             
             // Merge nodes
+            if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+                std::swap(mergenode1, mergenode2);
+                std::swap(vmn1, vmn2);
+            }
             bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
             nmerge++;
             
@@ -1691,8 +1696,7 @@ if (system->inclusion_enabled && nmerge > 0) {
                                                                  &pold3[0],&p3[0],&pold3[0],&p3[0]);
                 */
                 int collisionConditionIsMet = HingeCollisionCriterion(&L1,&p1[0],&p3[0],&p4[0]);
-                
-                if (!collisionConditionIsMet) {
+                if (!collisionConditionIsMet && L1 > 0.0) {
                     // No collision in the past, look for a possible collision in the future....
                     Vec3 pnext1 = p1 + dt * network->nodes[i].v;
                     Vec3 pnext3 = p3 + dt * network->nodes[n3].v;
@@ -1803,6 +1807,10 @@ if (system->inclusion_enabled && nmerge > 0) {
                 //check_node_plane_violation(network, conn, mergenode1, "before merge hinge collision");
                 //check_node_plane_violation(network, conn, mergenode2, "before merge hinge collision");
                 
+                if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+                    std::swap(mergenode1, mergenode2);
+                    std::swap(vmn1, vmn2);
+                }
                 bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
                 nmerge++;
                 
@@ -2098,20 +2106,11 @@ void CollisionRetroactive::retroactive_collision_parallel(System* system)
         //check_node_plane_violation(network, conn, mergenode2, "before merge collision");
         
         // Merge nodes
-        // 在第9292行 merge_nodes_position 之前插入：
-
-// 奥罗万保护：两个固定节点之间不合并
-bool mn1_fixed = (network->nodes[mergenode1].constraint == PINNED_NODE);
-bool mn2_fixed = (network->nodes[mergenode2].constraint == PINNED_NODE);
-if (mn1_fixed && mn2_fixed) continue;
-if (mn1_fixed) {
-    newpos = network->nodes[mergenode1].pos;
-} else if (mn2_fixed) {
-    newpos = network->nodes[mergenode2].pos;
-}
-
-bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
-        // merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
+        if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+            std::swap(mergenode1, mergenode2);
+            std::swap(vmn1, vmn2);
+        }
+        bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
         nmerge++;
         
         // Attempt to fix glide plane violations that may have been
@@ -2179,7 +2178,7 @@ bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos,
                                                                  &pold3[0],&p3[0],&pold3[0],&p3[0]);
                 */
                 int collisionConditionIsMet = HingeCollisionCriterion(&L1,&p1[0],&p3[0],&p4[0],tri);
-                if (!collisionConditionIsMet) {
+                if (!collisionConditionIsMet && L1 > 0.0) {
                     // No collision in the past, look for a possible collision in the future....
                     Vec3 pnext1 = p1 + dt * network->nodes[i].v;
                     Vec3 pnext3 = p3 + dt * network->nodes[n3].v;
@@ -2290,6 +2289,10 @@ bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos,
                 //check_node_plane_violation(network, conn, mergenode1, "before merge hinge collision");
                 //check_node_plane_violation(network, conn, mergenode2, "before merge hinge collision");
                 
+                if (network->nodes[mergenode2].constraint != UNCONSTRAINED) {
+                    std::swap(mergenode1, mergenode2);
+                    std::swap(vmn1, vmn2);
+                }
                 bool merge_error = network->merge_nodes_position(mergenode1, mergenode2, newpos, system->dEp);
                 nmerge++;
                 

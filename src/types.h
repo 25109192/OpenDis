@@ -367,6 +367,8 @@ namespace Kokkos { //reduction identity must be defined in Kokkos namespace
  *-------------------------------------------------------------------------*/
 #include <Kokkos_Random.hpp>
 
+namespace ExaDiS {
+
 struct RandomGenerator {
     Kokkos::Random_XorShift64_Pool<Kokkos::Serial> random_pool_serial;
     Kokkos::Random_XorShift64_Pool<Kokkos::DefaultExecutionSpace> random_pool_device;
@@ -409,6 +411,8 @@ struct RandomGenerator {
     }
 };
 
+} // namespace ExaDiS
+
 /*---------------------------------------------------------------------------
  *
  *    Struct:       SortView
@@ -420,6 +424,8 @@ struct RandomGenerator {
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
 #endif
+
+namespace ExaDiS {
 
 template <class ExecutionSpace = Kokkos::DefaultExecutionSpace>
 struct SortView
@@ -480,5 +486,7 @@ struct SortViewByKey<Kokkos::Cuda>
     }
 };
 #endif
+
+} // namespace ExaDiS
 
 #endif

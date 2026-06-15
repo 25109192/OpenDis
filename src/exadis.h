@@ -11,7 +11,7 @@
 #ifndef EXADIS_H
 #define EXADIS_H
 
-#define EXADIS_VERSION "0.1"
+#include "exadis_version.h"
 
 #include <Kokkos_Core.hpp>
 

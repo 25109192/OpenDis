@@ -137,6 +137,16 @@ bool SerialDisNet::sanity_check() {
     return is_sane;
 }
 
+void Cell::set_pbc(std::vector<int> pbc) {
+    if (pbc.size() == 1) {
+        xpbc = ypbc = zpbc = pbc[0];
+    } else if (pbc.size() == 3) {
+        xpbc = pbc[0]; ypbc = pbc[1]; zpbc = pbc[2];
+    } else {
+        ExaDiS_fatal("Error: input must be an array of size 1 or 3 in set_pbc()\n");
+    }
+}
+
 std::vector<int> Cell::get_pbc() {
     std::vector<int> pbc = {xpbc, ypbc, zpbc};
     return pbc;
@@ -975,6 +985,7 @@ PYBIND11_MODULE(pyexadis, m) {
         .def(py::init<const Mat33&, const Vec3&, std::vector<int> >(), py::arg("h"), py::arg("origin")=Vec3(0.0),
              py::arg("is_periodic")=std::vector<int>({PBC_BOUND,PBC_BOUND,PBC_BOUND}))
         .def(py::init([](Cell& cell) { return new Cell(cell.H, cell.origin, cell.get_pbc()); }), py::arg("cell"))
+        .def("set_pbc", &Cell::set_pbc, "Set the cell pbc flags along the 3 dimensions")
         .def_readonly("h", &Cell::H, "Cell matrix")
         .def_readonly("origin", &Cell::origin, "Origin of the cell")
         .def("center", &Cell::center, "Returns the center of the cell")
@@ -984,7 +995,11 @@ PYBIND11_MODULE(pyexadis, m) {
              "Returns the closest image of an array of positions from a reference position", py::arg("Rref"), py::arg("R"))
         .def("closest_image", (Vec3 (Cell::*)(Vec3&, Vec3&)) &Cell::pbc_position, 
              "Returns the closest image of a position from another", py::arg("Rref"), py::arg("R"))
+        .def("pbc_position", (Vec3 (Cell::*)(Vec3&, Vec3&)) &Cell::pbc_position, 
+             "Returns the closest image of a position from another (alias for closest_image)", py::arg("Rref"), py::arg("R"))
         .def("pbc_fold", &Cell::pbc_fold_array, "Fold an array of positions to the primary cell")
+        .def("real_position", &Cell::real_position, "Return the real position of a scaled coordinate")
+        .def("scaled_position", &Cell::scaled_position, "Return the scaled coordinate of a real position")
         .def("is_inside", (bool (Cell::*)(Vec3&)) &Cell::is_inside, "Checks if a position is inside the primary cell")
         .def("are_inside", (std::vector<bool> (Cell::*)(std::vector<Vec3>&)) &Cell::is_inside_array, "Checks if an array of positions are inside the primary cell")
         .def("is_triclinic", &Cell::is_triclinic, "Returns if the box is triclinic")
@@ -1063,6 +1078,7 @@ PYBIND11_MODULE(pyexadis, m) {
         .def("number_of_nodes", &ExaDisNet::number_of_nodes, "Returns the number of nodes in the network")
         .def("number_of_segs", &ExaDisNet::number_of_segs, "Returns the number of segments in the network")
         .def("is_sane", &ExaDisNet::is_sane, "Checks if the network is sane")
+        .def("set_cell", &ExaDisNet::set_cell, "Set the cell containing the network")
         .def("get_cell", &ExaDisNet::get_cell, "Get the cell containing the network")
         .def("get_nodes_array", &ExaDisNet::get_nodes_array, "Get the list of nodes (dom,id,x,y,z,constraint) of the network")
         .def("get_segs_array", &ExaDisNet::get_segs_array, "Get the list of segments (n1,n2,burg,plane) of the network")
@@ -1272,6 +1288,8 @@ PYBIND11_MODULE(pyexadis, m) {
     // Mobility
     py::class_<MobilityBind>(m, "Mobility")
         .def(py::init<>())
+        .def("name", &MobilityBind::name, "Return mobility name")
+        .def("non_linear", &MobilityBind::non_linear, "Return mobility non-linear flag")
         .def("compute", &MobilityBind::compute, "Compute mobility of the system");
     m.def("make_mobility_glide", &make_mobility<MobilityType::GLIDE>, "Instantiate a GLIDE mobility law",
           py::arg("params"), py::arg("mobparams"));

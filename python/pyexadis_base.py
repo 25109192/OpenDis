@@ -49,6 +49,8 @@ except ImportError:
 from enum import IntEnum
 class NodeConstraints(IntEnum):
     UNCONSTRAINED = 0
+    CORNER_NODE = 1
+    SURFACE_NODE = 6
     PINNED_NODE = 7
 
 try:
@@ -831,9 +833,12 @@ class SimulateNetwork:
         
         if self.rotation:
             from scipy.spatial.transform import Rotation
-            R = Rotation.from_euler('xyz', np.array([1.,-1.,1.])*dWp).as_matrix()
-            edir = np.matmul(R, state["edir"])
+            Rspin = Rotation.from_euler('xyz', np.array([1.,-1.,1.])*dWp).as_matrix()
+            edir = np.matmul(Rspin, state["edir"])
             state["edir"] = edir / np.linalg.norm(edir)
+            # Rotate stress
+            S = np.array(state["applied_stress"][[0,5,4,5,1,3,4,3,2]]).reshape(3,3)
+            state["applied_stress"] = np.matmul(Rspin, np.matmul(S, Rspin.T)).ravel()[[0,4,8,5,2,1]] # xx,yy,zz,yz,xz,xy
         
         if self.loading_mode == 'strain_rate':
             A0 = np.outer(state["edir"], state["edir"])

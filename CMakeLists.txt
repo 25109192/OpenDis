@@ -43,7 +43,12 @@ else()
     message(STATUS "CMAKE_PROJECT_NAME: ${CMAKE_PROJECT_NAME}")
 endif()
 
-project(ExaDiS LANGUAGES CXX)
+set(EXADIS_MACROS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macros")
+
+project(ExaDiS
+    VERSION 0.2.0
+    LANGUAGES CXX
+)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 

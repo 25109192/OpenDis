@@ -20,7 +20,7 @@ namespace ExaDiS {
 class OpRec; // forward declaration
     
 enum {FREE_BOUND, PBC_BOUND};
-enum NodeConstraints {UNCONSTRAINED = 0, PINNED_NODE = 7, CORNER_NODE = 1, SURFACE_NODE = 8, INCLUSION_NODE = 9};
+enum NodeConstraints {UNCONSTRAINED = 0, PINNED_NODE = 7, CORNER_NODE = 1, SURFACE_NODE = 6, INCLUSION_NODE = 9};
 
 /*---------------------------------------------------------------------------
  *
@@ -312,6 +312,7 @@ struct Cell
     }
     
     // Python binding
+    void set_pbc(std::vector<int> pbc);
     std::vector<int> get_pbc();
     std::vector<Vec3> pbc_position_array(std::vector<Vec3>& r0, std::vector<Vec3>& r);
     std::vector<Vec3> pbc_position_array(Vec3& r0, std::vector<Vec3>& r);
