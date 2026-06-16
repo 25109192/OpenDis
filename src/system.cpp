@@ -721,6 +721,7 @@ void System::insert_surface_nodes(SerialDisNet* network)
     // 切入双点捕获:两端在外、弦横切夹杂,在切入点和切出点各插一个 c9 节点
     std::sort(to_clip.begin(), to_clip.end(),
               [](const auto& a, const auto& b){ return a.seg_id > b.seg_id; });
+    int clip_corner = 0;  // [EDGEPROBE] clip 段上插入的棱接触节点数
     for (auto& info : to_clip) {
         int seg_id = info.seg_id;
         if (seg_id >= network->number_of_segs()) continue;
@@ -748,10 +749,56 @@ void System::insert_surface_nodes(SerialDisNet* network)
             long long kout = network->nodes[nodeOut].tag.domain * 1000000LL
                            + network->nodes[nodeOut].tag.index;
             node_was_inside[kout] = true;
+
+            // ── 当场消除穿心截:在切入/切出点之间插棱接触节点 ──
+            // 切入面与切出面共享一条立方体棱 E;接触点 = 段滑移面 π ∩ E。
+            // s2 此刻是 nodeIn→nodeOut 这条穿心截,把它在 corner 处折开,
+            // 使 nodeIn→corner、corner→nodeOut 各自贴在一个面上、不进内部。
+            Vec3 C = inclusion_centers[info.incl_id];
+            Vec3 lin  = info.hit_in  - C;
+            Vec3 lout = info.hit_out - C;
+            int ain = 0;
+            if (fabs(lin[1])  > fabs(lin[ain]))  ain  = 1;
+            if (fabs(lin[2])  > fabs(lin[ain]))  ain  = 2;
+            int aout = 0;
+            if (fabs(lout[1]) > fabs(lout[aout])) aout = 1;
+            if (fabs(lout[2]) > fabs(lout[aout])) aout = 2;
+            Vec3 npl = network->segs[s2].plane;
+            // 仅相邻面(不同轴)才有共享棱可绕;同面/对面(同轴)跳过
+            if (ain != aout && npl.norm2() > 1e-10) {
+                Vec3 nrm = npl.normalized();
+                int afree = 3 - ain - aout;
+                double d  = dot(nrm, lin);              // lin 在滑移面 π 上
+                double si = (lin[ain]   >= 0.0) ? half : -half;
+                double so = (lout[aout] >= 0.0) ? half : -half;
+                Vec3 corner(0.0);
+                corner[ain]  = si;
+                corner[aout] = so;
+                if (fabs(nrm[afree]) > 1e-9)
+                    corner[afree] = (d - nrm[ain]*si - nrm[aout]*so) / nrm[afree];
+                else
+                    corner[afree] = 0.5*(lin[afree] + lout[afree]);
+                if (corner[afree] >  half) corner[afree] =  half;
+                if (corner[afree] < -half) corner[afree] = -half;
+                // 退化保护:接触点与某端点几乎重合则不插(避免零长段)
+                if ((corner - lin).norm() > 1.0 && (corner - lout).norm() > 1.0) {
+                    int nodeE = network->split_seg(s2, C + corner);
+                    if (nodeE >= 0) {
+                        network->nodes[nodeE].constraint = INCLUSION_NODE;
+                        network->nodes[nodeE].v = Vec3(0.0);
+                        new_surface_nodes++;
+                        clip_corner++;
+                        long long ke = network->nodes[nodeE].tag.domain * 1000000LL
+                                     + network->nodes[nodeE].tag.index;
+                        node_was_inside[ke] = true;
+                    }
+                }
+            }
         }
     }
     if (!to_clip.empty())
-        ExaDiS_log("[EDGEPROBE] clip-born interior chords = %zu\n", to_clip.size());
+        ExaDiS_log("[EDGEPROBE] clip segs=%zu, edge-corner inserted=%d\n",
+                   to_clip.size(), clip_corner);
 
     if (new_surface_nodes > 0) {
         network->generate_connectivity();
