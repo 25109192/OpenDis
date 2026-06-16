@@ -153,15 +153,10 @@ public:
     int orowan_loop_count = 0;
     void detect_orowan_loop(SerialDisNet* network);
     bool inclusion_initialized = false;
-    bool same_inclusion_face(const Vec3& pos1, const Vec3& pos2) const;
     //void snap_surface_nodes_to_inclusion(SerialDisNet* network);
     //bool first_surface_insertion = true;
     bool is_node_strictly_inside_inclusion(const Vec3& pos) const;
-    void snap_nodes_to_surface(SerialDisNet* network);
-    Vec3 get_face_normal(const Vec3& hit, const Vec3& center, double half) const;
     void project_surface_node_velocity(SerialDisNet* network);
-    void check_surface_node_transition(SerialDisNet* network);
-    void enforce_edge_continuity(SerialDisNet* network);
     void correct_surface_node_positions(SerialDisNet* network);
     void insert_edge_nodes(SerialDisNet* network);
     // 记录上一步结束时在夹杂内部的节点 Tag ID

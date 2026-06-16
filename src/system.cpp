@@ -531,104 +531,6 @@ bool System::seg_cube_clip(const Vec3& pa, const Vec3& pb,
     return true;
 }
 
-/*---------------------------------------------------------------------------
- *
- *    Function:     System::snap_nodes_to_surface()
- *
- *    在积分之前调用。
- *    对于即将进入夹杂的节点，沿其速度方向计算与夹杂表面的交点，
- *    将节点直接移动到交点处并固定为 PINNED_NODE。
- *
- *    优点：不产生新节点，不需要拓扑操作，节点数不增长。
- *    适用：节点在通道中运动，速度方向指向夹杂表面的情况。
- *
- *    调用时机：mobility->compute() 之后，integrator->integrate() 之前。
- *
- *-------------------------------------------------------------------------*/
-void System::snap_nodes_to_surface(SerialDisNet* network)
-{
-    if (!inclusion_enabled) return;
-
-    double half = inclusion_a_dim * 0.5;
-int nnodes = network->number_of_nodes();
-    int snapped = 0;
-
-    for (int i = 0; i < nnodes; i++) {
-        // 只处理非 PINNED 的自由节点
-        if (network->nodes[i].constraint == INCLUSION_NODE) continue;
-
-        Vec3 pos = network->nodes[i].pos;
-        Vec3 vel = network->nodes[i].v;
-
-        // 速度为零的节点不会移动，跳过
-        double vn = vel.norm();
-        if (vn < 1e-30) continue;
-
-        // 如果节点已经在夹杂内，交给 insert_surface_nodes 处理
-        if (is_node_in_inclusion(pos)) continue;
-
-        // 沿速度方向延伸 maxseg 距离，预测节点的运动趋势
-        // 不依赖 dt 的精确值，只判断速度方向是否指向夹杂
-        Vec3 pos_next = pos + (params.maxseg / vn) * vel;
-
-        // 检查延伸方向上是否会进入夹杂
-        bool next_in = is_node_in_inclusion(pos_next);
-
-        if (!next_in) continue;  // 速度方向不指向夹杂，跳过
-
-        // 找到 pos → pos_next 与夹杂表面的交点
-        double min_dist = 1e30;
-        Vec3 best_hit;
-        bool found = false;
-
-        for (const auto& center : inclusion_centers) {
-            Vec3 hit;
-            if (seg_cube_intersect(pos, pos_next, center, half, hit)) {
-                double dist = (hit - pos).norm();
-                if (dist < min_dist) {
-                    min_dist = dist;
-                    best_hit = hit;
-                    found = true;
-                }
-            }
-        }
-
-        if (!found) continue;
-
-        // 将节点吸附到表面交点并固定
-        network->nodes[i].pos        = network->cell.pbc_fold(best_hit);
-        network->nodes[i].constraint = INCLUSION_NODE;
-        network->nodes[i].v          = Vec3(0.0);
-        snapped++;
-    }
-
-    if (snapped > 0) {
-        // 重建连接表（节点位置改变，但拓扑不变，只需刷新指针）
-        network->update_ptr();
-    }
-}
-/*---------------------------------------------------------------------------
- *
- *    Function:     System::get_face_normal()
- *                  返回交点 hit 所在立方体面的外法向量
- *
- *-------------------------------------------------------------------------*/
-Vec3 System::get_face_normal(const Vec3& hit, const Vec3& center, double half) const
-{
-    Vec3 local = hit - center;
-    int best_axis = 0;
-    double best_dist = 1e30;
-    for (int k = 0; k < 3; ++k) {
-        double dist = fabs(fabs(local[k]) - half);
-        if (dist < best_dist) {
-            best_dist = dist;
-            best_axis = k;
-        }
-    }
-    Vec3 normal(0.0);
-    normal[best_axis] = (local[best_axis] > 0.0) ? 1.0 : -1.0;
-    return normal;
-}
 
 /*---------------------------------------------------------------------------
  *
@@ -674,30 +576,6 @@ void System::project_surface_node_velocity(SerialDisNet* network)
     }
 }
 
-/*---------------------------------------------------------------------------
- *
- *    Function:     System::check_surface_node_transition()
- *
- *    重新设计版本（PIN→SURFACE 改造，第二阶段）
- *
- *    根据节点的当前位置，重新判定它应该贴在哪些面上（可能是 1、2、或
- *    3 个面，分别对应面节点、棱节点、角节点），更新它的法向量和位置。
- *
- *    与旧版本的关键区别：
- *    - 不允许节点脱离表面恢复为自由节点（遵循设计文档 3A）
- *    - 正确处理棱节点和角节点（合成法向量）
- *    - 正确处理面↔棱、棱↔角之间的状态变化
- *
- *    本函数不处理"节点深入夹杂内部"的情况——那由
- *    update_inclusion_constraints 处理。
- *
- *-------------------------------------------------------------------------*/
-void System::check_surface_node_transition(SerialDisNet* network)
-{
-    // Stage 3: disabled — face assignment now handled by correct_surface_node_positions
-    // via realtime classify each step. Edge handling → stage 5.
-    return;
-}
 
 /*---------------------------------------------------------------------------
  *
@@ -1279,39 +1157,6 @@ DisNetManager* make_network_manager(SerialDisNet* net) {
     return exadis_new<DisNetManager>(net);
 }
 
-/*---------------------------------------------------------------------------
- *
- *    Function:     System::same_inclusion_face()
- *
- *-------------------------------------------------------------------------*/
-bool System::same_inclusion_face(const Vec3& pos1, const Vec3& pos2) const {
-    if (!inclusion_enabled) return false;
-    double half = inclusion_a_dim * 0.5;
-    double tol = 0.01 * inclusion_a_dim;  // 从 5% 收紧到 1%
-
-    for (const auto& center : inclusion_centers) {
-        for (int axis = 0; axis < 3; axis++) {
-            double c1 = pos1[axis] - center[axis];
-            double c2 = pos2[axis] - center[axis];
-
-            bool p1_on_face = fabs(fabs(c1) - half) < tol;
-            bool p2_on_face = fabs(fabs(c2) - half) < tol;
-            bool same_side  = (c1 * c2 > 0.0);  // 同侧（同号）
-
-            if (p1_on_face && p2_on_face && same_side) {
-                // 确认两点在其余两个方向上均在夹杂范围内
-                bool in_face_1 = true, in_face_2 = true;
-                for (int other = 0; other < 3; other++) {
-                    if (other == axis) continue;
-                    if (fabs(pos1[other] - center[other]) > half + tol) in_face_1 = false;
-                    if (fabs(pos2[other] - center[other]) > half + tol) in_face_2 = false;
-                }
-                if (in_face_1 && in_face_2) return true;
-            }
-        }
-    }
-    return false;
-}
 
 void System::detect_orowan_loop(SerialDisNet* network)
 {
@@ -1329,34 +1174,6 @@ void System::detect_orowan_loop(SerialDisNet* network)
             }
         }
     }
-}
-/*---------------------------------------------------------------------------
- *
- *    Function:     System::enforce_edge_continuity()
- *
- *    棱穿透修复：
- *    扫描所有线段，找到两端都是表面节点但位于不同面的段。
- *    如果段穿越夹杂内部（中点在内），在段所跨的棱上插入一个新的
- *    PINNED 表面节点，将段一分为二。
- *
- *    判据：
- *    - 两端都在 surface_node_normal 表中
- *    - 两端属于同一个夹杂
- *    - 两端的法向量不同（在不同面上）
- *    - 段的中点位于该夹杂内部
- *
- *    新节点：
- *    - 位置：投影到 n1 和 n2 共享的棱上，沿棱方向取段中点的坐标
- *    - 法向量：(n1 + n2) 归一化（暂用近似，待 SURFACE 改造时细化）
- *    - constraint：INCLUSION_NODE（与现有表面节点一致）
- *    - 登记到 surface_node_normal 和 surface_node_incl_id
- *
- *    调用时机：在 step() 中所有 update_inclusion_constraints 之后调用。
- *
- *-------------------------------------------------------------------------*/
-void System::enforce_edge_continuity(SerialDisNet* network)
-{
-    return; // retired: no longer inserts map-tracked edge nodes
 }
 /*---------------------------------------------------------------------------
  *

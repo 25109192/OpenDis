@@ -658,10 +658,8 @@ void ExaDiSApp::step(Control& ctrl)
     if (system->inclusion_enabled) {
         SerialDisNet* net = system->get_serial_network();
         system->insert_surface_nodes(net);
-        system->check_surface_node_transition(net);
         system->insert_edge_nodes(net);   // Stage 10c: 在捕获前插棱,使交点严格落在 A、B 之间(t<1)
         system->update_inclusion_constraints(net);
-        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled
         system->correct_surface_node_positions(net);
     }
 
@@ -673,7 +671,6 @@ void ExaDiSApp::step(Control& ctrl)
     if (system->inclusion_enabled) {
         SerialDisNet* net = system->get_serial_network();
         system->update_inclusion_constraints(net);
-        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled — 1D glide-line projection should anchor edges at box edges naturally
     }
 
     // Collision（内部调用 purge_network，清除幽灵段）
@@ -692,10 +689,8 @@ void ExaDiSApp::step(Control& ctrl)
     if (system->inclusion_enabled) {
         SerialDisNet* net = system->get_serial_network();
         system->insert_surface_nodes(net);
-        system->check_surface_node_transition(net);
         system->insert_edge_nodes(net);   // Stage 10c: 在捕获前插棱,使交点严格落在 A、B 之间(t<1)
         system->update_inclusion_constraints(net);
-        // system->enforce_edge_continuity(net);  // Stage 7 experiment: disabled
         system->correct_surface_node_positions(net);
     }
     // Update stress
