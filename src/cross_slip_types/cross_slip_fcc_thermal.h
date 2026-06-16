@@ -208,14 +208,38 @@ private:
         const double tol  = 1e-6;
         const double scos = cos(params.screwAngleTolerance * M_PI / 180.0);
 
-        SerialDisNet::DisLinks dislinks = network->physical_links();
+        std::vector<std::vector<int>> seglinks = network->physical_links();
         std::vector<ScrewChain> chains;
 
-        for (int l = 0; l < dislinks.number_of_links; l++) {
-            const auto& snodes = dislinks.links_nodes[l];
-            const auto& ssegs  = dislinks.links_segs[l];
+        for (int l = 0; l < (int)seglinks.size(); l++) {
+            const std::vector<int>& ssegs = seglinks[l];
             if (ssegs.empty()) continue;
             int nseg = (int)ssegs.size();
+
+            // The upgraded physical_links() returns only the ordered segment
+            // list per link; rebuild the ordered node list from connectivity.
+            // Start node = endpoint of seg 0 not shared with seg 1, then walk.
+            std::vector<int> snodes;
+            snodes.reserve(nseg + 1);
+            if (nseg == 1) {
+                snodes.push_back(network->segs[ssegs[0]].n1);
+                snodes.push_back(network->segs[ssegs[0]].n2);
+            } else {
+                int a1 = network->segs[ssegs[0]].n1;
+                int a2 = network->segs[ssegs[0]].n2;
+                int b1 = network->segs[ssegs[1]].n1;
+                int b2 = network->segs[ssegs[1]].n2;
+                int shared = (a1 == b1 || a1 == b2) ? a1 : a2;
+                int cur = (shared == a1) ? a2 : a1;
+                snodes.push_back(cur);
+                for (int k = 0; k < nseg; k++) {
+                    int s = ssegs[k];
+                    int other = (network->segs[s].n1 == cur)
+                                ? network->segs[s].n2 : network->segs[s].n1;
+                    snodes.push_back(other);
+                    cur = other;
+                }
+            }
 
             // Burgers vector, sign-corrected for traversal direction
             int s0 = ssegs[0];
