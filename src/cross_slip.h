@@ -108,5 +108,6 @@ bool node_pinned(System* system, N* net, int i, int planeIndex,
 // Available cross-slip types
 #include "cross_slip_serial.h"
 #include "cross_slip_parallel.h"
+#include "cross_slip_fcc_thermal.h"
 
 #endif

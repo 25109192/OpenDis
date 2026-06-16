@@ -620,8 +620,13 @@ class CrossSlip:
         force_module = get_module_arg('CrossSlip::'+self.cross_slip_mode, kwargs, 'force')
         force, self.force_python = get_exadis_force(force_module, state, params)
         
-        self.cross_slip = pyexadis.make_cross_slip(cross_slip_mode, params=params, force=force)
-        
+        cs_thermal_params = kwargs.get('cs_thermal_params', None)
+
+        if cs_thermal_params is not None:
+            self.cross_slip = pyexadis.make_cross_slip(cross_slip_mode, params=params, force=force, cs_thermal_params=cs_thermal_params)
+        else:
+            self.cross_slip = pyexadis.make_cross_slip(cross_slip_mode, params=params, force=force)
+
     def Handle(self, N: DisNetManager, state: dict) -> None:
         G = N.get_disnet(ExaDisNet)
         # update state dictionary if force/mobility are python-based

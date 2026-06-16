@@ -612,7 +612,69 @@ def write_data(N: DisNetManager, datafile: str):
     N.get_disnet(ExaDisNet).write_data(datafile)
 
 
-def write_vtk(N: DisNetManager, vtkfile: str, segprops={}, pbc_wrap=True):
+# The 12 standard FCC slip systems as (plane_normal, burgers_vector).
+# Indices 0-11 correspond to slip system IDs 1-12; anything else is ID 13 ("other").
+_FCC_SLIP_SYSTEMS = [
+    (np.array([ 1., 1., 1.]), np.array([ 1., 0.,-1.])),   #  1
+    (np.array([ 1., 1., 1.]), np.array([ 0., 1.,-1.])),   #  2
+    (np.array([ 1., 1., 1.]), np.array([ 1.,-1., 0.])),   #  3
+    (np.array([ 1.,-1., 1.]), np.array([ 1., 1., 0.])),   #  4
+    (np.array([ 1.,-1., 1.]), np.array([ 1., 0.,-1.])),   #  5
+    (np.array([ 1.,-1., 1.]), np.array([ 0., 1., 1.])),   #  6
+    (np.array([-1., 1., 1.]), np.array([ 1., 1., 0.])),   #  7
+    (np.array([-1., 1., 1.]), np.array([ 1., 0., 1.])),   #  8
+    (np.array([-1., 1., 1.]), np.array([ 0., 1.,-1.])),   #  9
+    (np.array([ 1., 1.,-1.]), np.array([ 1., 0., 1.])),   # 10
+    (np.array([ 1., 1.,-1.]), np.array([ 0., 1., 1.])),   # 11
+    (np.array([ 1., 1.,-1.]), np.array([ 1.,-1., 0.])),   # 12
+]
+# Pre-normalize for repeated use
+_FCC_SLIP_SYSTEMS_NORM = [
+    (pref / np.linalg.norm(pref), bref / np.linalg.norm(bref))
+    for pref, bref in _FCC_SLIP_SYSTEMS
+]
+
+
+def get_fcc_slip_system_ids(b_array: np.ndarray, n_array: np.ndarray, tol: float = 0.02) -> np.ndarray:
+    """Return the FCC slip system ID for each segment.
+
+    Parameters
+    ----------
+    b_array : (N, 3) array of Burgers vectors
+    n_array : (N, 3) array of plane normals
+    tol     : tolerance on |cos θ - 1| for parallel/anti-parallel check
+
+    Returns
+    -------
+    ids : (N,) integer array with values 1-12 for the 12 standard FCC slip
+          systems and 13 for any segment that does not belong to a recognised
+          system (junction, stair-rod, zero vector, …).
+    """
+    b = np.asarray(b_array, dtype=float)
+    n = np.asarray(n_array, dtype=float)
+
+    bnorm = np.linalg.norm(b, axis=1, keepdims=True)
+    nnorm = np.linalg.norm(n, axis=1, keepdims=True)
+
+    # Guard against zero vectors
+    valid = (bnorm[:, 0] > 1e-20) & (nnorm[:, 0] > 1e-20)
+    bn = np.where(bnorm > 1e-20, b / bnorm, 0.0)
+    nn = np.where(nnorm > 1e-20, n / nnorm, 0.0)
+
+    ids = np.full(len(b), 13, dtype=int)
+
+    for sys_idx, (pn, br) in enumerate(_FCC_SLIP_SYSTEMS_NORM):
+        plane_match   = np.abs(np.abs(nn @ pn) - 1.0) < tol   # n ∥ pn
+        burgers_match = np.abs(np.abs(bn @ br) - 1.0) < tol   # b ∥ br
+        match = valid & plane_match & burgers_match
+        # Only assign if not already classified (first match wins)
+        unassigned = ids == 13
+        ids[match & unassigned] = sys_idx + 1
+
+    return ids
+
+
+def write_vtk(N: DisNetManager, vtkfile: str, segprops={}, pbc_wrap=True, crystal_structure=None):
     """ Write dislocation network in vtk format
     """
     data = N.export_data()
@@ -718,7 +780,15 @@ def write_vtk(N: DisNetManager, vtkfile: str, segprops={}, pbc_wrap=True):
     f.write("VECTORS Planes FLOAT\n")
     f.write("%f %f %f\n" % tuple(np.zeros(3)))
     np.savetxt(f, p, fmt='%f')
-    
+
+    if crystal_structure is not None and crystal_structure.upper() == 'FCC':
+        slip_ids = get_fcc_slip_system_ids(b, p)
+        f.write("SCALARS SlipSystem INT 1\n")
+        f.write("LOOKUP_TABLE default\n")
+        # Pad a dummy value (0) for the box cell, then write per-segment IDs
+        f.write("0\n")
+        np.savetxt(f, slip_ids, fmt='%d')
+
     for k, v in segprops.items():
         vals = np.atleast_2d(v.T).T
         if vals.shape[0] != nsegs:

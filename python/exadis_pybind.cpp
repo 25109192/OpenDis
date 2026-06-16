@@ -789,7 +789,8 @@ void remesh(ExaDisNet& disnet, RemeshBind& remeshbind)
  *    Cross-slip binding
  *
  *-------------------------------------------------------------------------*/
-CrossSlipBind make_cross_slip(std::string cross_slip_mode, Params& params, ForceBind& forcebind)
+CrossSlipBind make_cross_slip(std::string cross_slip_mode, Params& params, ForceBind& forcebind,
+                              CrossSlipFCCThermal::Params cs_thermal_params = CrossSlipFCCThermal::Params())
 {
     System* system = make_system(new SerialDisNet(), Crystal(params.crystal), params);
     
@@ -811,9 +812,25 @@ CrossSlipBind make_cross_slip(std::string cross_slip_mode, Params& params, Force
         } else {
             ExaDiS_fatal("Error: invalid force type for CrossSlipParallel binding\n");
         }
-    } else if (cross_slip_mode == "ForceBasedSerial") {  
+    } else if (cross_slip_mode == "ForceBasedSerial") {
         crossslip = new CrossSlipSerial(system, force);
-    } else if (cross_slip_mode == "None") { 
+    } else if (cross_slip_mode == "FCCThermal") {
+        crossslip = new CrossSlipFCCThermal(system, force, cs_thermal_params);
+    } else if (cross_slip_mode == "FCCThermalParallel") {
+        if (forcebind.model == ForceBind::LINE_TENSION_MODEL) {
+            crossslip = new CrossSlipFCCThermalParallel<ForceType::LINE_TENSION_MODEL>(system, force, cs_thermal_params);
+        } else if (forcebind.model == ForceBind::CUTOFF_MODEL) {
+            crossslip = new CrossSlipFCCThermalParallel<ForceType::CUTOFF_MODEL>(system, force, cs_thermal_params);
+        } else if (forcebind.model == ForceBind::DDD_FFT_MODEL) {
+            crossslip = new CrossSlipFCCThermalParallel<ForceType::DDD_FFT_MODEL>(system, force, cs_thermal_params);
+        } else if (forcebind.model == ForceBind::SUBCYCLING_MODEL) {
+            crossslip = new CrossSlipFCCThermalParallel<ForceType::SUBCYCLING_MODEL>(system, force, cs_thermal_params);
+        } else if (forcebind.model == ForceBind::GLOBAL_MODEL) {
+            crossslip = new CrossSlipFCCThermalParallel<ForceType::GLOBAL_MODEL>(system, force, cs_thermal_params);
+        } else {
+            ExaDiS_fatal("Error: invalid force type for CrossSlipFCCThermalParallel binding\n");
+        }
+    } else if (cross_slip_mode == "None") {
         crossslip = new CrossSlip(system);
     } else {
         ExaDiS_fatal("Error: invalid cross-slip mode %s\n", cross_slip_mode.c_str());
@@ -1251,8 +1268,41 @@ PYBIND11_MODULE(pyexadis, m) {
     py::class_<CrossSlipBind>(m, "CrossSlip")
         .def(py::init<>())
         .def("handle", &CrossSlipBind::handle, "Handle cross-slip operations of the system");
+
+    // CrossSlipFCCThermal parameters struct
+    py::class_<CrossSlipFCCThermal::Params>(m, "CrossSlipFCCThermalParams")
+        .def(py::init<>())
+        .def_readwrite("temperature",                    &CrossSlipFCCThermal::Params::temperature)
+        .def_readwrite("evalFrequency",     &CrossSlipFCCThermal::Params::evalFrequency)
+        // Bulk
+        .def_readwrite("bulkActivationEnergy",           &CrossSlipFCCThermal::Params::bulkActivationEnergy)
+        .def_readwrite("bulkActivationVolume",           &CrossSlipFCCThermal::Params::bulkActivationVolume)
+        .def_readwrite("bulkAttemptFrequency",           &CrossSlipFCCThermal::Params::bulkAttemptFrequency)
+        .def_readwrite("bulkReferenceLength",            &CrossSlipFCCThermal::Params::bulkReferenceLength)
+        // Hirth lock
+        .def_readwrite("hirthActivationEnergy",          &CrossSlipFCCThermal::Params::hirthActivationEnergy)
+        .def_readwrite("hirthActivationVolume",          &CrossSlipFCCThermal::Params::hirthActivationVolume)
+        .def_readwrite("hirthAttemptFrequency",          &CrossSlipFCCThermal::Params::hirthAttemptFrequency)
+        .def_readwrite("hirthReferenceLength",           &CrossSlipFCCThermal::Params::hirthReferenceLength)
+        .def_readwrite("hirthEffectiveLength",           &CrossSlipFCCThermal::Params::hirthEffectiveLength)
+        // Glide lock
+        .def_readwrite("glideLockActivationEnergy",      &CrossSlipFCCThermal::Params::glideLockActivationEnergy)
+        .def_readwrite("glideLockActivationVolume",      &CrossSlipFCCThermal::Params::glideLockActivationVolume)
+        .def_readwrite("glideLockAttemptFrequency",      &CrossSlipFCCThermal::Params::glideLockAttemptFrequency)
+        .def_readwrite("glideLockReferenceLength",       &CrossSlipFCCThermal::Params::glideLockReferenceLength)
+        .def_readwrite("glideLockEffectiveLength",       &CrossSlipFCCThermal::Params::glideLockEffectiveLength)
+        // LC lock
+        .def_readwrite("lcLockActivationEnergy",         &CrossSlipFCCThermal::Params::lcLockActivationEnergy)
+        .def_readwrite("lcLockActivationVolume",         &CrossSlipFCCThermal::Params::lcLockActivationVolume)
+        .def_readwrite("lcLockAttemptFrequency",         &CrossSlipFCCThermal::Params::lcLockAttemptFrequency)
+        .def_readwrite("lcLockReferenceLength",          &CrossSlipFCCThermal::Params::lcLockReferenceLength)
+        .def_readwrite("lcLockEffectiveLength",          &CrossSlipFCCThermal::Params::lcLockEffectiveLength)
+        // Angle
+        .def_readwrite("screwAngleTolerance",            &CrossSlipFCCThermal::Params::screwAngleTolerance);
+
     m.def("make_cross_slip", &make_cross_slip, "Instantiate a cross-slip class",
-          py::arg("cross_slip_mode"), py::arg("params"), py::arg("force"));
+          py::arg("cross_slip_mode"), py::arg("params"), py::arg("force"),
+          py::arg("cs_thermal_params") = CrossSlipFCCThermal::Params());
     m.def("handle_cross_slip", &handle_cross_slip, "Wrapper to handle cross-slip operations",
           py::arg("net"), py::arg("cross_slip"));
 

@@ -133,6 +133,12 @@ Vec3_t<T> operator-(const Vec3_t<T> &a, const Vec3_t<T> &b) {
     return Vec3_t<T>(a.x-b.x, a.y-b.y, a.z-b.z);
 }
 
+template <typename T>
+KOKKOS_FORCEINLINE_FUNCTION
+Vec3_t<T> operator-(const Vec3_t<T> &a) {
+    return Vec3_t<T>(-a.x, -a.y, -a.z);
+}
+
 template<typename T>
 KOKKOS_FORCEINLINE_FUNCTION
 Vec3_t<T> operator*(const int &s, const Vec3_t<T> &a) {
@@ -143,6 +149,18 @@ template<typename T, typename U>
 KOKKOS_FORCEINLINE_FUNCTION
 Vec3_t<T> operator*(const U &s, const Vec3_t<T> &a) {
     return Vec3_t<T>(s * a.x, s * a.y, s * a.z);
+}
+
+template<typename T, typename U>
+KOKKOS_FORCEINLINE_FUNCTION
+Vec3_t<T> operator*(const Vec3_t<T> &a, const U &s) {
+    return Vec3_t<T>(a.x * s, a.y * s, a.z * s);
+}
+
+template<typename T, typename U>
+KOKKOS_FORCEINLINE_FUNCTION
+Vec3_t<T> operator/(const Vec3_t<T> &a, const U &s) {
+    return Vec3_t<T>(a.x / s, a.y / s, a.z / s);
 }
 
 template <typename T>
