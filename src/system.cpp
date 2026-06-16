@@ -603,7 +603,6 @@ int nnodes = network->number_of_nodes();
     }
 
     if (snapped > 0) {
-        ExaDiS_log("Orowan: snapped %d nodes to inclusion surface\n", snapped);
         // 重建连接表（节点位置改变，但拓扑不变，只需刷新指针）
         network->update_ptr();
     }
@@ -810,7 +809,6 @@ void System::insert_surface_nodes(SerialDisNet* network)
     for (auto& info : to_split) {
         int seg_id   = info.seg_id;
         Vec3 hit_pos = info.hit_pos;
-        int incl_id  = info.incl_id;
         if (seg_id >= network->number_of_segs()) continue;
  
         int n1 = network->segs[seg_id].n1;
@@ -837,20 +835,6 @@ void System::insert_surface_nodes(SerialDisNet* network)
         network->nodes[new_node].constraint = INCLUSION_NODE;
         network->nodes[new_node].v = Vec3(0.0);
         new_surface_nodes++;
-        // 验证插入位置的深度
-        Vec3 inserted_pos = network->nodes[new_node].pos;
-        Vec3 center = inclusion_centers[incl_id];
-        Vec3 local = inserted_pos - center;
-        double depth = fmin(fmin(
-            half - fabs(local.x),
-            half - fabs(local.y)),
-            half - fabs(local.z));
-        ExaDiS_log("Orowan: new surface node depth=%.4f b, hit_pos depth=%.4f b\n",
-                depth,
-                fmin(fmin(
-                    half - fabs((hit_pos - center).x),
-                    half - fabs((hit_pos - center).y)),
-                    half - fabs((hit_pos - center).z)));
         long long new_key = network->nodes[new_node].tag.domain * 1000000LL
                           + network->nodes[new_node].tag.index;
         node_was_inside[new_key] = true;
@@ -887,8 +871,9 @@ void System::insert_surface_nodes(SerialDisNet* network)
                            + network->nodes[nodeOut].tag.index;
             node_was_inside[kout] = true;
         }
-        ExaDiS_log("Orowan: clip-in capture on seg %d (2 surface nodes)\n", seg_id);
     }
+    if (!to_clip.empty())
+        ExaDiS_log("[EDGEPROBE] clip-born interior chords = %zu\n", to_clip.size());
 
     if (new_surface_nodes > 0) {
         network->generate_connectivity();
@@ -1464,6 +1449,8 @@ void System::insert_edge_nodes(SerialDisNet* network)
 
     int nsegs = network->number_of_segs();
     bool updated = false;
+    // [EDGEPROBE] 统计各漏点分支命中数(每次调用一行)
+    int p_anchor_edge=0, p_both_edge=0, p_nocross=0, p_vertex=0, p_minsep=0, p_insert=0;
 
     for (int i = 0; i < nsegs; i++) {
         if (network->segs[i].burg.norm2() < 1e-20) continue;
@@ -1476,10 +1463,10 @@ void System::insert_edge_nodes(SerialDisNet* network)
 
         // Use the c9 face node as anchor (na); skip if na is already on an edge
         int na = c1 ? n1 : n2, nb = c1 ? n2 : n1;
-        if (inclusion_on_edge(network->nodes[na].pos, 2.0)) continue;
+        if (inclusion_on_edge(network->nodes[na].pos, 2.0)) { p_anchor_edge++; continue; }
         // Both ends already on edges → segment is a chord bounded by surface
         // nodes; inserting between them only plants spurious vertex nodes.
-        if (c1 && c2 && inclusion_on_edge(network->nodes[nb].pos, 2.0)) continue;
+        if (c1 && c2 && inclusion_on_edge(network->nodes[nb].pos, 2.0)) { p_both_edge++; continue; }
 
         // Nearest inclusion center to na
         int incl = 0; double bestd = 1e30;
@@ -1494,24 +1481,30 @@ void System::insert_edge_nodes(SerialDisNet* network)
         Vec3 n  = network->segs[i].plane.normalized();
 
         Vec3 xcut;
-        if (!inclusion_segment_edge_cross(l1, l2, n, half, xcut)) continue;
+        if (!inclusion_segment_edge_cross(l1, l2, n, half, xcut)) { p_nocross++; continue; }
         // Crossing clamped onto a cube vertex (all 3 axes at ±half): degenerate
         // corner insertion, would plant a spurious vertex node. Skip.
         int xc_corner = (fabs(xcut.x) >= half-2.0) + (fabs(xcut.y) >= half-2.0)
                       + (fabs(xcut.z) >= half-2.0);
-        if (xc_corner >= 3) continue;
+        if (xc_corner >= 3) { p_vertex++; continue; }
 
         Vec3 pos = network->cell.pbc_fold(C + xcut);
 
-        if ((pos - network->nodes[na].pos).norm() < min_sep) continue;
-        if ((pos - network->nodes[nb].pos).norm() < min_sep) continue;
+        if ((pos - network->nodes[na].pos).norm() < min_sep) { p_minsep++; continue; }
+        if ((pos - network->nodes[nb].pos).norm() < min_sep) { p_minsep++; continue; }
 
         int nnew = network->split_seg(i, pos);
         if (nnew < 0) continue;
         network->nodes[nnew].constraint = INCLUSION_NODE;
         network->nodes[nnew].v = Vec3(0.0);
         updated = true;
+        p_insert++;
     }
+
+    if (p_anchor_edge+p_both_edge+p_nocross+p_vertex+p_minsep+p_insert > 0)
+        ExaDiS_log("[EDGEPROBE] insert=%d skip: vertex(角)=%d minsep(死区)=%d "
+                   "bothedge(落棱)=%d anchoredge=%d nocross=%d\n",
+                   p_insert, p_vertex, p_minsep, p_both_edge, p_anchor_edge, p_nocross);
 
     if (updated) {
         network->generate_connectivity();
