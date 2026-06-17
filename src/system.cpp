@@ -1368,6 +1368,10 @@ void System::insert_edge_nodes(SerialDisNet* network)
                 corner[afree] = 0.5*(l1[afree] + l2[afree]);
             if (corner[afree] >  half) corner[afree] =  half;
             if (corner[afree] < -half) corner[afree] = -half;
+            // 顶点保护:三轴均贴 ±half → 夹到立方体顶点(脱滑移面),跳过(对齐一端自由路径)
+            int xc3 = (fabs(corner[0]) >= half-2.0) + (fabs(corner[1]) >= half-2.0)
+                    + (fabs(corner[2]) >= half-2.0);
+            if (xc3 >= 3) continue;
             Vec3 pos = network->cell.pbc_fold(C + corner);
             if ((pos - network->nodes[na].pos).norm() < 1.0) continue;  // 退化:接触点≈端点
             if ((pos - network->nodes[nb].pos).norm() < 1.0) continue;

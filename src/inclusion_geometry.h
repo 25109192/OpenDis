@@ -118,10 +118,35 @@ Vec3 inclusion_project_glide_line(const Vec3& local, const int face_sign[3],
         p[b] = local[b] + t * glide_n[b];
         p[c] = local[c] + t * glide_n[c];
     }
-    if (p[b] >  half) p[b] =  half;
-    if (p[b] < -half) p[b] = -half;
-    if (p[c] >  half) p[c] =  half;
-    if (p[c] < -half) p[c] = -half;
+    // 落点超出面方块 → 沿"面∩滑移面"这条线(方向 ⟂ (n[b],n[c]))退回方块边界,
+    // 落在 π∩棱(保持在滑移面上 = 截线 P 的棱点),而非各轴独立 clamp 到盒角(脱滑移面、跑顶点)。
+    if (p[b] > half || p[b] < -half || p[c] > half || p[c] < -half) {
+        double db = -glide_n[c], dc = glide_n[b];   // in-face line direction (on π)
+        if (db*db + dc*dc > 1e-12) {
+            double s_lo = -1e30, s_hi = 1e30;
+            if (db > 1e-12 || db < -1e-12) {
+                double s1 = (-half - p[b]) / db, s2 = (half - p[b]) / db;
+                if (s1 > s2) { double tmp = s1; s1 = s2; s2 = tmp; }
+                if (s1 > s_lo) s_lo = s1;
+                if (s2 < s_hi) s_hi = s2;
+            }
+            if (dc > 1e-12 || dc < -1e-12) {
+                double s1 = (-half - p[c]) / dc, s2 = (half - p[c]) / dc;
+                if (s1 > s2) { double tmp = s1; s1 = s2; s2 = tmp; }
+                if (s1 > s_lo) s_lo = s1;
+                if (s2 < s_hi) s_hi = s2;
+            }
+            if (s_lo <= s_hi) {                       // clip s=0(越界点)回 [s_lo,s_hi]
+                double s = (0.0 < s_lo) ? s_lo : (0.0 > s_hi ? s_hi : 0.0);
+                p[b] += s * db;
+                p[c] += s * dc;
+            }
+        }
+        if (p[b] >  half) p[b] =  half;   // 浮点兜底
+        if (p[b] < -half) p[b] = -half;
+        if (p[c] >  half) p[c] =  half;
+        if (p[c] < -half) p[c] = -half;
+    }
     return p;
 }
 
