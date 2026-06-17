@@ -1313,8 +1313,9 @@ void System::insert_edge_nodes(SerialDisNet* network)
 
     int nsegs = network->number_of_segs();
     bool updated = false;
-    // [EDGEPROBE] 统计各漏点分支命中数(每次调用一行)
-    int p_anchor_edge=0, p_both_edge=0, p_nocross=0, p_vertex=0, p_minsep=0, p_insert=0;
+    // [EDGEPROBE] 分支命中计数(每次调用一行)
+    int p_anchor_edge=0, p_nocross=0, p_vertex=0, p_minsep=0, p_insert=0;
+    int p_c9chord=0, p_c9corner=0;   // C9-C9 穿心弦:检出 / 成功插角
 
     for (int i = 0; i < nsegs; i++) {
         if (network->segs[i].burg.norm2() < 1e-20) continue;
@@ -1325,12 +1326,7 @@ void System::insert_edge_nodes(SerialDisNet* network)
         bool c2 = (network->nodes[n2].constraint == INCLUSION_NODE);
         if (!c1 && !c2) continue;
 
-        // Use the c9 face node as anchor (na); skip if na is already on an edge
         int na = c1 ? n1 : n2, nb = c1 ? n2 : n1;
-        if (inclusion_on_edge(network->nodes[na].pos, 2.0)) { p_anchor_edge++; continue; }
-        // Both ends already on edges → segment is a chord bounded by surface
-        // nodes; inserting between them only plants spurious vertex nodes.
-        if (c1 && c2 && inclusion_on_edge(network->nodes[nb].pos, 2.0)) { p_both_edge++; continue; }
 
         // Nearest inclusion center to na
         int incl = 0; double bestd = 1e30;
@@ -1342,12 +1338,55 @@ void System::insert_edge_nodes(SerialDisNet* network)
         Vec3 C = inclusion_centers[incl];
         Vec3 l1 = network->cell.pbc_position(C, network->nodes[na].pos) - C;
         Vec3 l2 = network->cell.pbc_position(C, network->nodes[nb].pos) - C;
-        Vec3 n  = network->segs[i].plane.normalized();
+        Vec3 nrm = network->segs[i].plane.normalized();
+
+        // ── 两端都是 c9(都在表面)→ 跨面弦 ──────────────────────────────
+        // 这种弦在"面内穿出参数"判据里穿出点落在 nb 端(t≈1)被丢(nocross 漏)。
+        // 改为直接判穿心+由两端的面定 corner:弦中点在夹杂内(确证穿心)、
+        // 两端在不同轴的面 → 在共享棱 π∩E 插一个 c9,使段折回表面截线。
+        if (c1 && c2) {
+            Vec3 mid = network->cell.pbc_fold(C + 0.5*(l1 + l2));
+            if (!is_node_in_inclusion(mid)) continue;   // 弦不穿内部(同面/沿棱)→ 无需插
+            p_c9chord++;
+            int ain = 0;
+            if (fabs(l1[1]) > fabs(l1[ain])) ain = 1;
+            if (fabs(l1[2]) > fabs(l1[ain])) ain = 2;
+            int aout = 0;
+            if (fabs(l2[1]) > fabs(l2[aout])) aout = 1;
+            if (fabs(l2[2]) > fabs(l2[aout])) aout = 2;
+            if (ain == aout) continue;   // 同轴(对面横穿)→ 单 corner 不适用,留待后续
+            int afree = 3 - ain - aout;
+            double d  = dot(nrm, l1);
+            double si = (l1[ain]  >= 0.0) ? half : -half;
+            double so = (l2[aout] >= 0.0) ? half : -half;
+            Vec3 corner(0.0);
+            corner[ain]  = si;
+            corner[aout] = so;
+            if (fabs(nrm[afree]) > 1e-9)
+                corner[afree] = (d - nrm[ain]*si - nrm[aout]*so) / nrm[afree];
+            else
+                corner[afree] = 0.5*(l1[afree] + l2[afree]);
+            if (corner[afree] >  half) corner[afree] =  half;
+            if (corner[afree] < -half) corner[afree] = -half;
+            Vec3 pos = network->cell.pbc_fold(C + corner);
+            if ((pos - network->nodes[na].pos).norm() < 1.0) continue;  // 退化:接触点≈端点
+            if ((pos - network->nodes[nb].pos).norm() < 1.0) continue;
+            int nnew = network->split_seg(i, pos);
+            if (nnew < 0) continue;
+            network->nodes[nnew].constraint = INCLUSION_NODE;
+            network->nodes[nnew].v = Vec3(0.0);
+            updated = true;
+            p_c9corner++;
+            continue;
+        }
+
+        // ── 一端 c9、一端自由 ────────────────────────────────────────────
+        // 自由端 nb 不在面上,"面内穿出点"参数 0<t<1 成立,原判据本就能正确插角。
+        if (inclusion_on_edge(network->nodes[na].pos, 2.0)) { p_anchor_edge++; continue; }
 
         Vec3 xcut;
-        if (!inclusion_segment_edge_cross(l1, l2, n, half, xcut)) { p_nocross++; continue; }
-        // Crossing clamped onto a cube vertex (all 3 axes at ±half): degenerate
-        // corner insertion, would plant a spurious vertex node. Skip.
+        if (!inclusion_segment_edge_cross(l1, l2, nrm, half, xcut)) { p_nocross++; continue; }
+        // 穿出点夹到立方体顶点(三轴均±half):退化,跳过
         int xc_corner = (fabs(xcut.x) >= half-2.0) + (fabs(xcut.y) >= half-2.0)
                       + (fabs(xcut.z) >= half-2.0);
         if (xc_corner >= 3) { p_vertex++; continue; }
@@ -1365,10 +1404,10 @@ void System::insert_edge_nodes(SerialDisNet* network)
         p_insert++;
     }
 
-    if (p_anchor_edge+p_both_edge+p_nocross+p_vertex+p_minsep+p_insert > 0)
-        ExaDiS_log("[EDGEPROBE] insert=%d skip: vertex(角)=%d minsep(死区)=%d "
-                   "bothedge(落棱)=%d anchoredge=%d nocross=%d\n",
-                   p_insert, p_vertex, p_minsep, p_both_edge, p_anchor_edge, p_nocross);
+    if (p_anchor_edge+p_nocross+p_vertex+p_minsep+p_insert+p_c9chord+p_c9corner > 0)
+        ExaDiS_log("[EDGEPROBE] c9corner=%d/%d(chord) free_insert=%d skip: "
+                   "vertex=%d minsep=%d anchoredge=%d nocross=%d\n",
+                   p_c9corner, p_c9chord, p_insert, p_vertex, p_minsep, p_anchor_edge, p_nocross);
 
     if (updated) {
         network->generate_connectivity();
