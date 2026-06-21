@@ -145,6 +145,7 @@ public:
         }
         
         if (params.coarsen_mode == 1) {
+            int skip_c9absorb = 0;   // 试验计数:被拦下的"自由节点并入 c9"次数
             int nnodes = network->number_of_nodes();
             for (int i = 0; i < nnodes; i++) {
                 if (network->conn[i].num != 2) continue;
@@ -189,6 +190,9 @@ public:
                                ri.x, ri.y, ri.z, network->nodes[i].constraint,
                                r0.x, r0.y, r0.z, network->nodes[n0].constraint,
                                r1.x, r1.y, r1.z, network->nodes[n1].constraint);
+                // 试验:c9 只跟同面 c9 remesh → 自由节点不并入 c9(不吞自由臂,压边界 churn)
+                int mtgt = (l0 < l1) ? n0 : n1;
+                if (network->nodes[mtgt].constraint == INCLUSION_NODE) { skip_c9absorb++; continue; }
                 if (l0 < l1) {
                     // merge i into n0 at r0
                     network->merge_nodes_position(n0, i, r0, system->dEp);
@@ -201,6 +205,8 @@ public:
                     nrem++;
                 }
             }
+            if (skip_c9absorb > 0)
+                ExaDiS_log("[C9REMESH] skipped free->c9 absorb = %d\n", skip_c9absorb);
         }
         
         if (nrem > 0)
