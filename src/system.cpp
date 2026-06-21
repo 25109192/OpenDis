@@ -544,18 +544,58 @@ void System::project_surface_node_velocity(SerialDisNet* network)
 {
     if (!inclusion_enabled) return;
 
+    const double VREL_FRAC = 1e-2;   // 释放阈值:向外分量超过总速度此比例即脱离(无量纲)
+    const double FACE_TOL  = 2.0;    // 判定"贴在某面"的容差(与 inclusion_on_edge 一致)
+    double half = inclusion_a_dim * 0.5;
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
         if (network->nodes[i].constraint != INCLUSION_NODE) continue;
-        if (inclusion_on_edge(network->nodes[i].pos, 2.0)) {
-            network->nodes[i].v = Vec3(0.0);
+
+        Vec3 n_near;
+        int incl = inclusion_single_face_normal(network->nodes[i].pos, n_near);
+        if (incl < 0) continue;
+        Vec3 local = network->nodes[i].pos - inclusion_centers[incl];
+
+        // 该节点贴在哪些面:|local[k]|≈half。贴1面=面节点,2面=棱,3面=角。
+        int face_sign[3];
+        for (int k = 0; k < 3; k++) {
+            if      (fabs(local[k] - half) <= FACE_TOL) face_sign[k] = +1;
+            else if (fabs(local[k] + half) <= FACE_TOL) face_sign[k] = -1;
+            else                                         face_sign[k] =  0;
+        }
+
+        Vec3& v = network->nodes[i].v;
+        double vnorm = v.norm();
+
+        // 单边接触力判据(面/棱/角统一):对每个贴着的面看"沿外法向的分量"。
+        // 在所有贴着的面上都明显朝外 → 没东西把它压在墙上 → 脱离(挡不粘);
+        // 只要被压在 ≥1 个面 → 沿墙滑(挡)。棱节点不再焊死,服从同一条判据。
+        bool release = (vnorm > 1e-20);
+        int npressed = 0, pressed_axis = -1, ntouch = 0;
+        for (int k = 0; k < 3; k++) {
+            if (face_sign[k] == 0) continue;
+            ntouch++;
+            double outward = face_sign[k] * v[k];          // 沿该面外法向的分量
+            if (outward < VREL_FRAC * vnorm) release = false;
+            if (outward < 0.0) { npressed++; pressed_axis = k; }
+        }
+
+        if (ntouch == 0) {                                  // 数值上没贴住任何面(罕见)→ 退回最近单面
+            if (dot(v, n_near) > VREL_FRAC * vnorm && vnorm > 1e-20) {
+                network->nodes[i].constraint = UNCONSTRAINED; continue;
+            }
+        } else if (release) {
+            network->nodes[i].constraint = UNCONSTRAINED;   // 脱离:变回自由节点,保留原始 v
             continue;
         }
-        Vec3 n_surface;
-        if (inclusion_single_face_normal(network->nodes[i].pos, n_surface) < 0) continue;
 
-        // Same connected non-ghost segment plane that correct_surface_node_positions
-        // uses → velocity stays on the SAME 1D (face ∩ glide-plane) line as the position.
+        // 被压在墙上(挡):压住 ≥2 个面 → 困在棱/角交点,v=0;压住 1 个面 → 沿该面滑。
+        if (npressed >= 2) { v = Vec3(0.0); continue; }
+        Vec3 n_surface(0.0);
+        if (npressed == 1) n_surface[pressed_axis] = (double)face_sign[pressed_axis];
+        else               n_surface = n_near;             // 擦过/无明确压面 → 用最近面
+
+        // 投影到 (面 ∩ 滑移面) 这条线,沿墙滑、不许钻进墙(与位置约束同一条线)。
         Vec3 glide_n(0.0); bool has_glide = false;
         for (int j = 0; j < network->conn[i].num; j++) {
             int s = network->conn[i].seg[j];
@@ -563,8 +603,6 @@ void System::project_surface_node_velocity(SerialDisNet* network)
             if (network->segs[s].plane.norm2() < 1e-10) continue;
             glide_n = network->segs[s].plane.normalized(); has_glide = true; break;
         }
-
-        Vec3& v = network->nodes[i].v;
         if (has_glide) {
             Vec3 l = cross(glide_n, n_surface);
             double ln = l.norm();
