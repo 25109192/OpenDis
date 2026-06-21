@@ -171,9 +171,30 @@ struct MobilityFCC0
                 if (vmax > 0.0) 
                     apply_velocity_cap(vmax, vscale, vi);
 
-                // 表面节点的接触投影(挡/不粘)统一交给 host 函数
-                // project_surface_node_velocity 处理:此处返回未经接触投影的原始
-                // 速度,让 host 能看到"向外法向分量"来判定脱离(单边接触)。
+                // ★ 晶体学严格化:表面 PIN 节点投影到 "滑移面 ∩ 夹杂表面" 交线方向
+                if (is_surface_pin) {
+                    if (system->inclusion_on_edge(nodes[i].pos, 2.0)) {
+                        vi = Vec3(0.0);  // edge/corner node: fully pinned
+                    } else {
+                        Vec3 n_surface;
+                        if (system->inclusion_single_face_normal(nodes[i].pos, n_surface) >= 0) {
+                            if (ngc >= 1) {   // ngc>=2: 也用 norm[0] 的面∩平面线,和位置约束一致(刻意近似)
+                                Vec3 n_glide = norm[0];
+                                Vec3 l = cross(n_glide, n_surface);
+                                double l_norm = l.norm();
+                                if (l_norm > 1e-6) {
+                                    l = (1.0 / l_norm) * l;
+                                    vi = dot(vi, l) * l;
+                                } else {
+                                    vi = vi - dot(vi, n_surface) * n_surface;
+                                }
+                            } else {
+                                vi = vi - dot(vi, n_surface) * n_surface;
+                            }
+                            if (vi.norm2() < 1e-30) vi = Vec3(0.0);
+                        }
+                    }
+                }
             }
         }
         // 表面节点（SURFACE_NODE 类型）：速度投影到夹杂表面切平面
