@@ -658,7 +658,6 @@ void ExaDiSApp::step(Control& ctrl)
     if (system->inclusion_enabled) {
         SerialDisNet* net = system->get_serial_network();
         system->insert_surface_nodes(net);
-        system->insert_edge_nodes(net);   // Stage 10c: 在捕获前插棱,使交点严格落在 A、B 之间(t<1)
         system->update_inclusion_constraints(net);
         system->correct_surface_node_positions(net);
     }
@@ -689,7 +688,6 @@ void ExaDiSApp::step(Control& ctrl)
     if (system->inclusion_enabled) {
         SerialDisNet* net = system->get_serial_network();
         system->insert_surface_nodes(net);
-        system->insert_edge_nodes(net);   // Stage 10c: 在捕获前插棱,使交点严格落在 A、B 之间(t<1)
         system->update_inclusion_constraints(net);
         system->correct_surface_node_positions(net);
     }

@@ -387,37 +387,13 @@ void System::update_inclusion_constraints(SerialDisNet* network) {
         new_projected++;
     }
 
-    // ============================================================
-    // 第二步：清除幽灵段（保持原有逻辑作为兜底）
-    // ============================================================
-    int nsegs = network->number_of_segs();
-    int ghost_segs = 0;
-    for (int i = 0; i < nsegs; ++i) {
-        int n1 = network->segs[i].n1;
-        int n2 = network->segs[i].n2;
-        if (network->nodes[n1].constraint != INCLUSION_NODE) continue;
-        if (network->nodes[n2].constraint != INCLUSION_NODE) continue;
+    // 第二步(删穿心段)已移除:block-not-stick 模型下不删穿入段。
+    // 穿入节点由第一步捕获回表面;滑出面的节点由 correct_surface_node_positions 释放为自由节点。
 
-        bool n1_inside = is_node_strictly_inside_inclusion(network->nodes[n1].pos);
-        bool n2_inside = is_node_strictly_inside_inclusion(network->nodes[n2].pos);
-        if ((n1_inside || n2_inside) && network->segs[i].burg.norm2() > 1e-20) {
-            network->segs[i].burg = Vec3(0.0);
-            ghost_segs++;
-            ExaDiS_log("[DELMARK uic-zero] (%.0f,%.0f,%.0f) c=%d -(%.0f,%.0f,%.0f) c=%d in1=%d in2=%d\n",
-                       network->nodes[n1].pos.x, network->nodes[n1].pos.y, network->nodes[n1].pos.z,
-                       network->nodes[n1].constraint,
-                       network->nodes[n2].pos.x, network->nodes[n2].pos.y, network->nodes[n2].pos.z,
-                       network->nodes[n2].constraint, (int)n1_inside, (int)n2_inside);
-        }
-    }
-
-    if (new_fixed > 0 || ghost_segs > 0) {
+    if (new_fixed > 0) {
         total_fixed_count += new_fixed;
-        ExaDiS_log("Step: new fixed=%d (projected=%d), total fixed=%d, ghost segs zeroed=%d\n",
-                   new_fixed, new_projected, total_fixed_count, ghost_segs);
-        if (ghost_segs > 0) {
-            ExaDiS_log("*** Orowan ring candidate: ghost segs = %d ***\n", ghost_segs);
-        }
+        ExaDiS_log("Step: new fixed=%d (projected=%d), total fixed=%d\n",
+                   new_fixed, new_projected, total_fixed_count);
     }
 }
 
@@ -547,10 +523,7 @@ void System::project_surface_node_velocity(SerialDisNet* network)
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
         if (network->nodes[i].constraint != INCLUSION_NODE) continue;
-        if (inclusion_on_edge(network->nodes[i].pos, 2.0)) {
-            network->nodes[i].v = Vec3(0.0);
-            continue;
-        }
+        // block-not-stick:不再有棱钉死节点(到棱即释放),表面节点一律投到面线上滑动
         Vec3 n_surface;
         if (inclusion_single_face_normal(network->nodes[i].pos, n_surface) < 0) continue;
 
@@ -1274,16 +1247,18 @@ void System::correct_surface_node_positions(SerialDisNet* network)
             has_glide = true;
             break;
         }
-        // Sub-type by position: two axes near ±half → edge/corner node, pin to π∩E.
+        // block-not-stick:贴到棱/角(≥2 个面)= 已滑出单面 → 释放为自由节点,
+        // 位置不动,后续合并/碰撞/受力全交给 ExaDiS。绕过 = 释放后再被捕获(自发)。
         int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
                       + (fabs(local.z) >= half-2.0);
-        Vec3 proj;
-        if (near_half >= 2)
-            proj = inclusion_project_edge_point(local, half, glide_n);
-        else
-            proj = has_glide
-                 ? inclusion_project_glide_line(local, face_sign, half, glide_n)
-                 : inclusion_project_capture(local, face_sign, half, 30.0);
+        if (near_half >= 2) {
+            network->nodes[i].constraint = UNCONSTRAINED;
+            continue;
+        }
+        // 仍在单面上 → 投到 (面∩滑移面) 线,保持沿线滑动
+        Vec3 proj = has_glide
+                  ? inclusion_project_glide_line(local, face_sign, half, glide_n)
+                  : inclusion_project_capture(local, face_sign, half, 30.0);
         Vec3 new_pos = network->cell.pbc_fold(center + proj);
 
         double drift = (new_pos - old_pos).norm();
@@ -1296,127 +1271,7 @@ void System::correct_surface_node_positions(SerialDisNet* network)
     }
 }
 
-/*---------------------------------------------------------------------------
- *
- *    Function:     System::insert_edge_nodes()
- *
- *    Segment-driven edge interaction: for each segment with a c9 face node
- *    at one end, detect if the segment crosses a cube edge and insert a new
- *    c9 corner node at the π∩E intersection (glide plane ∩ cube edge).
- *
- *-------------------------------------------------------------------------*/
-void System::insert_edge_nodes(SerialDisNet* network)
-{
-    if (!inclusion_enabled || inclusion_centers.empty()) return;
-    double half = inclusion_a_dim * 0.5;
-    const double min_sep = 5.0;
-
-    int nsegs = network->number_of_segs();
-    bool updated = false;
-    // [EDGEPROBE] 分支命中计数(每次调用一行)
-    int p_anchor_edge=0, p_nocross=0, p_vertex=0, p_minsep=0, p_insert=0;
-    int p_c9chord=0, p_c9corner=0;   // C9-C9 穿心弦:检出 / 成功插角
-
-    for (int i = 0; i < nsegs; i++) {
-        if (network->segs[i].burg.norm2() < 1e-20) continue;
-        if (network->segs[i].plane.norm2() < 1e-10) continue;
-
-        int n1 = network->segs[i].n1, n2 = network->segs[i].n2;
-        bool c1 = (network->nodes[n1].constraint == INCLUSION_NODE);
-        bool c2 = (network->nodes[n2].constraint == INCLUSION_NODE);
-        if (!c1 && !c2) continue;
-
-        int na = c1 ? n1 : n2, nb = c1 ? n2 : n1;
-
-        // Nearest inclusion center to na
-        int incl = 0; double bestd = 1e30;
-        for (int k = 0; k < (int)inclusion_centers.size(); k++) {
-            Vec3 dd = network->nodes[na].pos - inclusion_centers[k];
-            double q = dot(dd, dd);
-            if (q < bestd) { bestd = q; incl = k; }
-        }
-        Vec3 C = inclusion_centers[incl];
-        Vec3 l1 = network->cell.pbc_position(C, network->nodes[na].pos) - C;
-        Vec3 l2 = network->cell.pbc_position(C, network->nodes[nb].pos) - C;
-        Vec3 nrm = network->segs[i].plane.normalized();
-
-        // ── 两端都是 c9(都在表面)→ 跨面弦 ──────────────────────────────
-        // 这种弦在"面内穿出参数"判据里穿出点落在 nb 端(t≈1)被丢(nocross 漏)。
-        // 改为直接判穿心+由两端的面定 corner:弦中点在夹杂内(确证穿心)、
-        // 两端在不同轴的面 → 在共享棱 π∩E 插一个 c9,使段折回表面截线。
-        if (c1 && c2) {
-            Vec3 mid = network->cell.pbc_fold(C + 0.5*(l1 + l2));
-            if (!is_node_in_inclusion(mid)) continue;   // 弦不穿内部(同面/沿棱)→ 无需插
-            p_c9chord++;
-            int ain = 0;
-            if (fabs(l1[1]) > fabs(l1[ain])) ain = 1;
-            if (fabs(l1[2]) > fabs(l1[ain])) ain = 2;
-            int aout = 0;
-            if (fabs(l2[1]) > fabs(l2[aout])) aout = 1;
-            if (fabs(l2[2]) > fabs(l2[aout])) aout = 2;
-            if (ain == aout) continue;   // 同轴(对面横穿)→ 单 corner 不适用,留待后续
-            int afree = 3 - ain - aout;
-            double d  = dot(nrm, l1);
-            double si = (l1[ain]  >= 0.0) ? half : -half;
-            double so = (l2[aout] >= 0.0) ? half : -half;
-            Vec3 corner(0.0);
-            corner[ain]  = si;
-            corner[aout] = so;
-            if (fabs(nrm[afree]) > 1e-9)
-                corner[afree] = (d - nrm[ain]*si - nrm[aout]*so) / nrm[afree];
-            else
-                corner[afree] = 0.5*(l1[afree] + l2[afree]);
-            if (corner[afree] >  half) corner[afree] =  half;
-            if (corner[afree] < -half) corner[afree] = -half;
-            // 顶点保护:三轴均贴 ±half → 夹到立方体顶点(脱滑移面),跳过(对齐一端自由路径)
-            int xc3 = (fabs(corner[0]) >= half-2.0) + (fabs(corner[1]) >= half-2.0)
-                    + (fabs(corner[2]) >= half-2.0);
-            if (xc3 >= 3) continue;
-            Vec3 pos = network->cell.pbc_fold(C + corner);
-            if ((pos - network->nodes[na].pos).norm() < 1.0) continue;  // 退化:接触点≈端点
-            if ((pos - network->nodes[nb].pos).norm() < 1.0) continue;
-            int nnew = network->split_seg(i, pos);
-            if (nnew < 0) continue;
-            network->nodes[nnew].constraint = INCLUSION_NODE;
-            network->nodes[nnew].v = Vec3(0.0);
-            updated = true;
-            p_c9corner++;
-            continue;
-        }
-
-        // ── 一端 c9、一端自由 ────────────────────────────────────────────
-        // 自由端 nb 不在面上,"面内穿出点"参数 0<t<1 成立,原判据本就能正确插角。
-        if (inclusion_on_edge(network->nodes[na].pos, 2.0)) { p_anchor_edge++; continue; }
-
-        Vec3 xcut;
-        if (!inclusion_segment_edge_cross(l1, l2, nrm, half, xcut)) { p_nocross++; continue; }
-        // 穿出点夹到立方体顶点(三轴均±half):退化,跳过
-        int xc_corner = (fabs(xcut.x) >= half-2.0) + (fabs(xcut.y) >= half-2.0)
-                      + (fabs(xcut.z) >= half-2.0);
-        if (xc_corner >= 3) { p_vertex++; continue; }
-
-        Vec3 pos = network->cell.pbc_fold(C + xcut);
-
-        if ((pos - network->nodes[na].pos).norm() < min_sep) { p_minsep++; continue; }
-        if ((pos - network->nodes[nb].pos).norm() < min_sep) { p_minsep++; continue; }
-
-        int nnew = network->split_seg(i, pos);
-        if (nnew < 0) continue;
-        network->nodes[nnew].constraint = INCLUSION_NODE;
-        network->nodes[nnew].v = Vec3(0.0);
-        updated = true;
-        p_insert++;
-    }
-
-    if (p_anchor_edge+p_nocross+p_vertex+p_minsep+p_insert+p_c9chord+p_c9corner > 0)
-        ExaDiS_log("[EDGEPROBE] c9corner=%d/%d(chord) free_insert=%d skip: "
-                   "vertex=%d minsep=%d anchoredge=%d nocross=%d\n",
-                   p_c9corner, p_c9chord, p_insert, p_vertex, p_minsep, p_anchor_edge, p_nocross);
-
-    if (updated) {
-        network->generate_connectivity();
-        network->update_ptr();
-    }
-}
+// insert_edge_nodes() 已删除(block-not-stick):不再插棱角点;节点到棱即由
+// correct_surface_node_positions 释放为自由节点,穿心弦视为离散近似不再修补。
 
 } // namespace ExaDiS
