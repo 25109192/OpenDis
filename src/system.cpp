@@ -544,16 +544,30 @@ void System::project_surface_node_velocity(SerialDisNet* network)
 {
     if (!inclusion_enabled) return;
 
+    const double VREL_FRAC = 1e-2;   // 释放阈值:向外分量超过总速度的此比例即脱离(无量纲,可调旋钮)
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
         if (network->nodes[i].constraint != INCLUSION_NODE) continue;
-        if (inclusion_on_edge(network->nodes[i].pos, 2.0)) {
-            network->nodes[i].v = Vec3(0.0);
-            continue;
-        }
-        Vec3 n_surface;
+
+        Vec3 n_surface;   // 当前位置实时定的最近单面外法向
         if (inclusion_single_face_normal(network->nodes[i].pos, n_surface) < 0) continue;
 
+        Vec3& v = network->nodes[i].v;
+
+        // 单边接触:墙只挡不拉。速度(力/迁移率,已被滑移面约束)若把节点带离墙面
+        // (向外法向分量 > 总速度的 VREL_FRAC)→ 此处没被压在墙上 → 解除约束,变回自由
+        // 节点,保留原始 v,之后全交 ExaDiS。这就是"不粘"。阈值用相对比例而非绝对值:
+        // 无量纲、自动随速度量级缩放,不受 erate/单位制影响。
+        if (dot(v, n_surface) > VREL_FRAC * v.norm()) {
+            network->nodes[i].constraint = UNCONSTRAINED;
+            continue;
+        }
+
+        // 否则被压在墙上 → 沿墙滑(挡):投影到 (面 ∩ 滑移面) 这条线,不许钻进墙。
+        if (inclusion_on_edge(network->nodes[i].pos, 2.0)) {
+            v = Vec3(0.0);   // 压在棱里且无外向分量 → 暂钉棱,下一步力转向即释放
+            continue;
+        }
         // Same connected non-ghost segment plane that correct_surface_node_positions
         // uses → velocity stays on the SAME 1D (face ∩ glide-plane) line as the position.
         Vec3 glide_n(0.0); bool has_glide = false;
@@ -563,8 +577,6 @@ void System::project_surface_node_velocity(SerialDisNet* network)
             if (network->segs[s].plane.norm2() < 1e-10) continue;
             glide_n = network->segs[s].plane.normalized(); has_glide = true; break;
         }
-
-        Vec3& v = network->nodes[i].v;
         if (has_glide) {
             Vec3 l = cross(glide_n, n_surface);
             double ln = l.norm();
