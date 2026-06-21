@@ -158,6 +158,7 @@ public:
     bool is_node_strictly_inside_inclusion(const Vec3& pos) const;
     void project_surface_node_velocity(SerialDisNet* network);
     void correct_surface_node_positions(SerialDisNet* network);
+    void insert_edge_nodes(SerialDisNet* network);
     // 记录上一步结束时在夹杂内部的节点 Tag ID
     // 用于增量式处理：只对本步新进入夹杂的节点插入表面节点
     std::unordered_map<long long, bool> node_was_inside;
