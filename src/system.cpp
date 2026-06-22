@@ -1310,16 +1310,11 @@ void System::correct_surface_node_positions(SerialDisNet* network)
             has_glide = true;
             break;
         }
-        // Sub-type by position: two axes near ±half → edge/corner node, pin to π∩E.
-        int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
-                      + (fabs(local.z) >= half-2.0);
-        Vec3 proj;
-        if (near_half >= 2)
-            proj = inclusion_project_edge_point(local, half, glide_n);
-        else
-            proj = has_glide
-                 ? inclusion_project_glide_line(local, face_sign, half, glide_n)
-                 : inclusion_project_capture(local, face_sign, half, 30.0);
+        // 棱/角节点也走 glide_line:它内部会沿(面∩滑移面)线退回 π∩棱、且严格保持在
+        // 滑移面上,所以棱节点落在 π∩棱(on-plane),不再被 edge_point 钉在偏离滑移面的高度。
+        Vec3 proj = has_glide
+                  ? inclusion_project_glide_line(local, face_sign, half, glide_n)
+                  : inclusion_project_capture(local, face_sign, half, 30.0);
         Vec3 new_pos = network->cell.pbc_fold(center + proj);
 
         double drift = (new_pos - old_pos).norm();
