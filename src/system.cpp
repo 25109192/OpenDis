@@ -544,56 +544,18 @@ void System::project_surface_node_velocity(SerialDisNet* network)
 {
     if (!inclusion_enabled) return;
 
-    const double VREL_FRAC = 1e-2;   // 释放阈值:向外分量超过总速度此比例即脱离(无量纲)
-    const double FACE_TOL  = 2.0;    // 判定"贴在某面"的容差(与 inclusion_on_edge 一致)
-    double half = inclusion_a_dim * 0.5;
     int nnodes = network->number_of_nodes();
     for (int i = 0; i < nnodes; i++) {
         if (network->nodes[i].constraint != INCLUSION_NODE) continue;
-
-        Vec3 n_near;
-        int incl = inclusion_single_face_normal(network->nodes[i].pos, n_near);
-        if (incl < 0) continue;
-        Vec3 local = network->nodes[i].pos - inclusion_centers[incl];
-
-        // 该节点贴在哪些面:|local[k]|≈half。贴1面=面节点,2面=棱,3面=角。
-        int face_sign[3];
-        for (int k = 0; k < 3; k++) {
-            if      (fabs(local[k] - half) <= FACE_TOL) face_sign[k] = +1;
-            else if (fabs(local[k] + half) <= FACE_TOL) face_sign[k] = -1;
-            else                                         face_sign[k] =  0;
-        }
-
-        Vec3& v = network->nodes[i].v;
-        double vnorm = v.norm();
-
-        // 单边接触力判据(面/棱/角统一):对每个贴着的面看"沿外法向的分量"。
-        // 在所有贴着的面上都明显朝外 → 没东西把它压在墙上 → 脱离(挡不粘);
-        // 只要被压在 ≥1 个面 → 沿墙滑(挡)。棱节点不再焊死,服从同一条判据。
-        bool release = (vnorm > 1e-20);
-        int ntouch = 0;
-        for (int k = 0; k < 3; k++) {
-            if (face_sign[k] == 0) continue;
-            ntouch++;
-            double outward = face_sign[k] * v[k];          // 沿该面外法向的分量
-            if (outward < VREL_FRAC * vnorm) release = false;
-        }
-
-        if (ntouch == 0) {                                  // 数值上没贴住任何面(罕见)→ 退回最近单面
-            if (dot(v, n_near) > VREL_FRAC * vnorm && vnorm > 1e-20) {
-                network->nodes[i].constraint = UNCONSTRAINED; continue;
-            }
-        } else if (release) {
-            network->nodes[i].constraint = UNCONSTRAINED;   // 脱离:变回自由节点,保留原始 v
+        if (inclusion_on_edge(network->nodes[i].pos, 2.0)) {
+            network->nodes[i].v = Vec3(0.0);
             continue;
         }
+        Vec3 n_surface;
+        if (inclusion_single_face_normal(network->nodes[i].pos, n_surface) < 0) continue;
 
-        // 被压在墙上(挡):棱/角节点(贴≥2面)→ 钉在交点 v=0,不沿棱滑(防沿棱棘轮脱离滑移面);
-        //                 面节点(贴1面)→ 沿 (面∩滑移面) 线滑。
-        if (ntouch >= 2) { v = Vec3(0.0); continue; }
-        Vec3 n_surface = n_near;
-
-        // 投影到 (面 ∩ 滑移面) 这条线,沿墙滑、不许钻进墙(与位置约束同一条线)。
+        // Same connected non-ghost segment plane that correct_surface_node_positions
+        // uses → velocity stays on the SAME 1D (face ∩ glide-plane) line as the position.
         Vec3 glide_n(0.0); bool has_glide = false;
         for (int j = 0; j < network->conn[i].num; j++) {
             int s = network->conn[i].seg[j];
@@ -601,6 +563,8 @@ void System::project_surface_node_velocity(SerialDisNet* network)
             if (network->segs[s].plane.norm2() < 1e-10) continue;
             glide_n = network->segs[s].plane.normalized(); has_glide = true; break;
         }
+
+        Vec3& v = network->nodes[i].v;
         if (has_glide) {
             Vec3 l = cross(glide_n, n_surface);
             double ln = l.norm();
@@ -1310,11 +1274,16 @@ void System::correct_surface_node_positions(SerialDisNet* network)
             has_glide = true;
             break;
         }
-        // 棱/角节点也走 glide_line:它内部会沿(面∩滑移面)线退回 π∩棱、且严格保持在
-        // 滑移面上,所以棱节点落在 π∩棱(on-plane),不再被 edge_point 钉在偏离滑移面的高度。
-        Vec3 proj = has_glide
-                  ? inclusion_project_glide_line(local, face_sign, half, glide_n)
-                  : inclusion_project_capture(local, face_sign, half, 30.0);
+        // Sub-type by position: two axes near ±half → edge/corner node, pin to π∩E.
+        int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
+                      + (fabs(local.z) >= half-2.0);
+        Vec3 proj;
+        if (near_half >= 2)
+            proj = inclusion_project_edge_point(local, half, glide_n);
+        else
+            proj = has_glide
+                 ? inclusion_project_glide_line(local, face_sign, half, glide_n)
+                 : inclusion_project_capture(local, face_sign, half, 30.0);
         Vec3 new_pos = network->cell.pbc_fold(center + proj);
 
         double drift = (new_pos - old_pos).norm();
