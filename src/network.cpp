@@ -267,6 +267,14 @@ bool SerialDisNet::merge_nodes_position(int n1, int n2, const Vec3& pos, Mat33& 
     } else {
         // Update merged node position
         nodes[n1].pos = cell.pbc_fold(pos);
+        // [MERGEC9] 诊断:任何触及夹杂表面节点(c9)的合并都打印——同时覆盖
+        // remesh coarsen 与 collision 合并,捕获"棱/面节点被重定位或删除"(诊断 C1)
+        if (nodes[n1].constraint == INCLUSION_NODE || nodes[n2].constraint == INCLUSION_NODE)
+            ExaDiS_log("[MERGEC9] keep=(%d,%d) c=%d -> (%.0f,%.0f,%.0f)  drop=(%d,%d) c=%d @(%.0f,%.0f,%.0f)\n",
+                       nodes[n1].tag.domain, nodes[n1].tag.index, nodes[n1].constraint,
+                       nodes[n1].pos.x, nodes[n1].pos.y, nodes[n1].pos.z,
+                       nodes[n2].tag.domain, nodes[n2].tag.index, nodes[n2].constraint,
+                       nodes[n2].pos.x, nodes[n2].pos.y, nodes[n2].pos.z);
         // Update the plastic strain
         dEp += dEp_updt;
     }
