@@ -571,13 +571,12 @@ void System::project_surface_node_velocity(SerialDisNet* network)
         // 在所有贴着的面上都明显朝外 → 没东西把它压在墙上 → 脱离(挡不粘);
         // 只要被压在 ≥1 个面 → 沿墙滑(挡)。棱节点不再焊死,服从同一条判据。
         bool release = (vnorm > 1e-20);
-        int npressed = 0, pressed_axis = -1, ntouch = 0;
+        int ntouch = 0;
         for (int k = 0; k < 3; k++) {
             if (face_sign[k] == 0) continue;
             ntouch++;
             double outward = face_sign[k] * v[k];          // 沿该面外法向的分量
             if (outward < VREL_FRAC * vnorm) release = false;
-            if (outward < 0.0) { npressed++; pressed_axis = k; }
         }
 
         if (ntouch == 0) {                                  // 数值上没贴住任何面(罕见)→ 退回最近单面
@@ -589,11 +588,10 @@ void System::project_surface_node_velocity(SerialDisNet* network)
             continue;
         }
 
-        // 被压在墙上(挡):压住 ≥2 个面 → 困在棱/角交点,v=0;压住 1 个面 → 沿该面滑。
-        if (npressed >= 2) { v = Vec3(0.0); continue; }
-        Vec3 n_surface(0.0);
-        if (npressed == 1) n_surface[pressed_axis] = (double)face_sign[pressed_axis];
-        else               n_surface = n_near;             // 擦过/无明确压面 → 用最近面
+        // 被压在墙上(挡):棱/角节点(贴≥2面)→ 钉在交点 v=0,不沿棱滑(防沿棱棘轮脱离滑移面);
+        //                 面节点(贴1面)→ 沿 (面∩滑移面) 线滑。
+        if (ntouch >= 2) { v = Vec3(0.0); continue; }
+        Vec3 n_surface = n_near;
 
         // 投影到 (面 ∩ 滑移面) 这条线,沿墙滑、不许钻进墙(与位置约束同一条线)。
         Vec3 glide_n(0.0); bool has_glide = false;
