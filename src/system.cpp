@@ -1299,6 +1299,7 @@ void System::insert_edge_nodes(SerialDisNet* network)
     // [EDGEPROBE] 分支命中计数(每次调用一行)
     int p_anchor_edge=0, p_nocross=0, p_vertex=0, p_minsep=0, p_insert=0;
     int p_c9chord=0, p_c9corner=0;   // C9-C9 穿心弦:检出 / 成功插角
+    int p_c9_axiskip=0, p_c9_vertex=0, p_c9_degen=0;  // [EDGEPROBE] C9-C9 跳过原因(诊断:捕捉)
 
     for (int i = 0; i < nsegs; i++) {
         if (network->segs[i].burg.norm2() < 1e-20) continue;
@@ -1337,7 +1338,7 @@ void System::insert_edge_nodes(SerialDisNet* network)
             int aout = 0;
             if (fabs(l2[1]) > fabs(l2[aout])) aout = 1;
             if (fabs(l2[2]) > fabs(l2[aout])) aout = 2;
-            if (ain == aout) continue;   // 同轴(对面横穿)→ 单 corner 不适用,留待后续
+            if (ain == aout) { p_c9_axiskip++; continue; }   // 同轴(对面横穿)→ 单 corner 不适用,留待后续
             int afree = 3 - ain - aout;
             double d  = dot(nrm, l1);
             double si = (l1[ain]  >= 0.0) ? half : -half;
@@ -1354,10 +1355,10 @@ void System::insert_edge_nodes(SerialDisNet* network)
             // 顶点保护:三轴均贴 ±half → 夹到立方体顶点(脱滑移面),跳过(对齐一端自由路径)
             int xc3 = (fabs(corner[0]) >= half-2.0) + (fabs(corner[1]) >= half-2.0)
                     + (fabs(corner[2]) >= half-2.0);
-            if (xc3 >= 3) continue;
+            if (xc3 >= 3) { p_c9_vertex++; continue; }
             Vec3 pos = network->cell.pbc_fold(C + corner);
-            if ((pos - network->nodes[na].pos).norm() < 1.0) continue;  // 退化:接触点≈端点
-            if ((pos - network->nodes[nb].pos).norm() < 1.0) continue;
+            if ((pos - network->nodes[na].pos).norm() < 1.0) { p_c9_degen++; continue; }  // 退化:接触点≈端点
+            if ((pos - network->nodes[nb].pos).norm() < 1.0) { p_c9_degen++; continue; }
             int nnew = network->split_seg(i, pos);
             if (nnew < 0) continue;
             network->nodes[nnew].constraint = INCLUSION_NODE;
@@ -1393,8 +1394,9 @@ void System::insert_edge_nodes(SerialDisNet* network)
 
     if (p_anchor_edge+p_nocross+p_vertex+p_minsep+p_insert+p_c9chord+p_c9corner > 0)
         ExaDiS_log("[EDGEPROBE] c9corner=%d/%d(chord) free_insert=%d skip: "
-                   "vertex=%d minsep=%d anchoredge=%d nocross=%d\n",
-                   p_c9corner, p_c9chord, p_insert, p_vertex, p_minsep, p_anchor_edge, p_nocross);
+                   "vertex=%d minsep=%d anchoredge=%d nocross=%d | c9skip: axis=%d vert=%d degen=%d\n",
+                   p_c9corner, p_c9chord, p_insert, p_vertex, p_minsep, p_anchor_edge, p_nocross,
+                   p_c9_axiskip, p_c9_vertex, p_c9_degen);
 
     if (updated) {
         network->generate_connectivity();

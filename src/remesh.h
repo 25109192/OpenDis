@@ -59,6 +59,7 @@ public:
         
         int nadd = 0;
         int nrem = 0;
+        int n_edgekill = 0;   // [EDGEKILL] 被 coarsen 掉的棱节点数(诊断:保护问题)
         
         int nsegs = network->number_of_segs();
         for (int i = 0; i < nsegs; i++) {
@@ -94,6 +95,7 @@ public:
                         Vec3 p0 = network->segs[s0].plane;
                         Vec3 p1 = network->segs[s1].plane;
                         if (cross(p0, p1).norm2() < 1e-3) {
+                            if (system->inclusion_enabled && system->inclusion_on_edge(network->nodes[n1].pos, 2.0)) n_edgekill++;
                             network->merge_nodes_position(n2, n1, r2, system->dEp);
                             system->crystal.reset_node_glide_planes(network, n2);
                             nrem++;
@@ -106,6 +108,7 @@ public:
                         Vec3 p0 = network->segs[s0].plane;
                         Vec3 p1 = network->segs[s1].plane;
                         if (cross(p0, p1).norm2() < 1e-3) {
+                            if (system->inclusion_enabled && system->inclusion_on_edge(network->nodes[n2].pos, 2.0)) n_edgekill++;
                             network->merge_nodes_position(n1, n2, r1, system->dEp);
                             system->crystal.reset_node_glide_planes(network, n1);
                             nrem++;
@@ -120,6 +123,7 @@ public:
                         } else if (network->nodes[n1].constraint != UNCONSTRAINED) {
                             rmid = r1;
                         }
+                        if (system->inclusion_enabled && system->inclusion_on_edge(network->nodes[n2].pos, 2.0)) n_edgekill++;
                         network->merge_nodes_position(n1, n2, rmid, system->dEp);
                         system->crystal.reset_node_glide_planes(network, n1);
                         nrem++;
@@ -194,6 +198,8 @@ public:
         if (nrem > 0)
             network->purge_network();
         
+        if (n_edgekill > 0)
+            ExaDiS_log("[EDGEKILL remesh] %d edge node(s) coarsened away this remesh\n", n_edgekill);
         //printf("refine add: %d, rem: %d\n",nadd,nrem);
     }
     
