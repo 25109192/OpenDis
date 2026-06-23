@@ -85,6 +85,28 @@ public:
             } else if (length < minseg && params.coarsen_mode == 0) {
                     if (network->nodes[n1].constraint == SURFACE_NODE ||
                         network->nodes[n2].constraint == SURFACE_NODE) continue;
+                // ★ 夹杂棱节点保护:棱节点不被同线 remesh 删除;棱-棱短段允许存在
+                if (system->inclusion_enabled) {
+                    bool e1 = system->inclusion_on_edge(network->nodes[n1].pos, 2.0);
+                    bool e2 = system->inclusion_on_edge(network->nodes[n2].pos, 2.0);
+                    const double EDGE_KEEP_FLOOR = 10.0;   // 棱-棱短段允许存在的下限(b)
+                    if (e1 && e2) {
+                        // 两端都是棱节点:> floor 的短段允许存在(不合并)
+                        if (length > EDGE_KEEP_FLOOR) continue;
+                        // < floor:太近(近顶点退化)→ 放行,落到下面正常合并
+                    } else if (e1 != e2) {
+                        // 一端棱、一端非棱:保住棱节点,把非棱端并入它
+                        int keep = e1 ? n1 : n2;
+                        int drop = e1 ? n2 : n1;
+                        if (network->nodes[drop].constraint != PINNED_NODE) {
+                            network->merge_nodes_position(keep, drop,
+                                          network->nodes[keep].pos, system->dEp);
+                            system->crystal.reset_node_glide_planes(network, keep);
+                            nrem++;
+                        }
+                        continue;
+                    }
+                }
                 // Merge segment nodes (coarsen)
                 if (system->crystal.enforce_glide_planes) {
                     // Do not remesh if node arms are on different planes
