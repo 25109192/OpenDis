@@ -1357,8 +1357,8 @@ void System::insert_edge_nodes(SerialDisNet* network)
                     + (fabs(corner[2]) >= half-2.0);
             if (xc3 >= 3) { p_c9_vertex++; continue; }
             Vec3 pos = network->cell.pbc_fold(C + corner);
-            if ((pos - network->nodes[na].pos).norm() < 1.0) { p_c9_degen++; continue; }  // 退化:接触点≈端点
-            if ((pos - network->nodes[nb].pos).norm() < 1.0) { p_c9_degen++; continue; }
+            if ((pos - network->nodes[na].pos).norm() < min_sep) { p_c9_degen++; continue; }  // 角点离端点 < min_sep:跳过(对齐自由分支,断凸棱齐诺细分)
+            if ((pos - network->nodes[nb].pos).norm() < min_sep) { p_c9_degen++; continue; }
             int nnew = network->split_seg(i, pos);
             if (nnew < 0) continue;
             network->nodes[nnew].constraint = INCLUSION_NODE;

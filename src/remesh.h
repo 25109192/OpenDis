@@ -85,16 +85,13 @@ public:
             } else if (length < minseg && params.coarsen_mode == 0) {
                     if (network->nodes[n1].constraint == SURFACE_NODE ||
                         network->nodes[n2].constraint == SURFACE_NODE) continue;
-                // ★ 夹杂棱节点保护:棱节点不被同线 remesh 删除;棱-棱短段允许存在
+                // ★ 夹杂棱节点保护:仅保住"棱吸面"(棱节点存活、面节点并入它)。
+                //   棱-棱段交给下面的共面判据:共线冗余点(两臂共面)正常 coarsen,
+                //   真角点(两臂不共面)自然被保留——不再按段长一刀切保护。
                 if (system->inclusion_enabled) {
                     bool e1 = system->inclusion_on_edge(network->nodes[n1].pos, 2.0);
                     bool e2 = system->inclusion_on_edge(network->nodes[n2].pos, 2.0);
-                    const double EDGE_KEEP_FLOOR = 10.0;   // 棱-棱短段允许存在的下限(b)
-                    if (e1 && e2) {
-                        // 两端都是棱节点:> floor 的短段允许存在(不合并)
-                        if (length > EDGE_KEEP_FLOOR) continue;
-                        // < floor:太近(近顶点退化)→ 放行,落到下面正常合并
-                    } else if (e1 != e2) {
+                    if (e1 != e2) {
                         // 一端棱、一端非棱:保住棱节点,把非棱端并入它
                         int keep = e1 ? n1 : n2;
                         int drop = e1 ? n2 : n1;
