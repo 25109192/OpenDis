@@ -803,167 +803,19 @@ void System::insert_surface_nodes(SerialDisNet* network)
     }
  
     // ================================================================
-    // 第二阶段：清除内部节点，重新连接外侧节点
-    //
-    // 【修复1】改为处理任意数量的外侧邻居：
-    //   size==0：ci是孤立内部节点，删除即可
-    //   size==1：ci是位错臂末端附近的内部节点，删除后留单臂悬端（正常）
-    //   size==2：原有逻辑，检查穿越后连接
-    //   size>=3：junction节点，对所有外侧邻居对两两检查并连接
+    // 第二阶段：落入夹杂内部的节点 → 推回表面、标 c9（不删节点、不重连）。
+    //   投影复用 correct_surface_node_positions 的 glide 感知棱/角投影，
+    //   连通性完全不动，从根上杜绝旧逻辑的扯断/错并/孤立碎片。
+    //   绕棱的"先在段上生成节点再放到 π∩棱"由保留的 insert_edge_nodes 负责。
     // ================================================================
- 
-    std::unordered_map<long long, int> tag_to_idx;
-    auto rebuild_tag_map = [&]() {
-        tag_to_idx.clear();
-        tag_to_idx.reserve(network->number_of_nodes());
-        for (int i = 0; i < network->number_of_nodes(); i++) {
-            long long key = network->nodes[i].tag.domain * 1000000LL
-                          + network->nodes[i].tag.index;
-            tag_to_idx[key] = i;
-        }
-    };
- 
-    auto find_node_by_tag = [&](const NodeTag& tag) -> int {
-        long long key = tag.domain * 1000000LL + tag.index;
-        auto it = tag_to_idx.find(key);
-        return (it != tag_to_idx.end()) ? it->second : -1;
-    };
- 
-    // 段长合理性上限：超过此值说明 PBC 折叠方向有问题
-    double max_seg_len = params.maxseg * 3.0;
- 
-    bool did_something = true;
-    int iter_count = 0;
-    int max_iter = network->number_of_nodes() + 10;
- 
-    network->generate_connectivity();
-    rebuild_tag_map();
- 
-    while (did_something && iter_count < max_iter) {
-        did_something = false;
-        iter_count++;
- 
-        // 找第一个严格在夹杂内部的非 PINNED 节点
-        int ci = -1;
-        for (int i = 0; i < network->number_of_nodes(); i++) {
-            if (network->nodes[i].constraint == INCLUSION_NODE) continue;
-            if (is_node_strictly_inside_inclusion(network->nodes[i].pos)) {
-                ci = i;
-                break;
-            }
-        }
-        if (ci < 0) break;
-        did_something = true;
- 
-        struct NeighborInfo {
-            NodeTag tag;
-            Vec3 burg;
-            Vec3 plane;
-        };
-        std::vector<NeighborInfo> outer_neighbors;
- 
-        for (int j = 0; j < network->conn[ci].num; j++) {
-            int nb     = network->conn[ci].node[j];
-            int seg_id = network->conn[ci].seg[j];
-            int order  = network->conn[ci].order[j];
- 
-            bool nb_is_inner =
-                (network->nodes[nb].constraint != INCLUSION_NODE) &&
-                is_node_strictly_inside_inclusion(network->nodes[nb].pos);
- 
-            if (!nb_is_inner) {
-                NeighborInfo info;
-                info.tag   = network->nodes[nb].tag;
-                info.burg  = order * network->segs[seg_id].burg;
-                info.plane = network->segs[seg_id].plane;
-                outer_neighbors.push_back(info);
-            }
-        }
- 
-        // 删除内部节点
-        network->remove_nodes({ci});
-        network->generate_connectivity();
-        network->update_ptr();
- 
-        // 孤立节点保护：删除 ci 后连接数 <=1 的非 PINNED 节点固定
-        for (int i = 0; i < network->number_of_nodes(); i++) {
-            if (network->nodes[i].constraint == INCLUSION_NODE) continue;
-            if (network->conn[i].num <= 1 && is_node_in_inclusion(network->nodes[i].pos)) {
-                ExaDiS_log("[FIX] src=isolate980 tag=(%d,%d) conn=%d pos=(%.0f,%.0f,%.0f)\n",
-                           network->nodes[i].tag.domain, network->nodes[i].tag.index,
-                           network->conn[i].num,
-                           network->nodes[i].pos.x, network->nodes[i].pos.y, network->nodes[i].pos.z);
-                network->nodes[i].constraint = INCLUSION_NODE;
-                network->nodes[i].v = Vec3(0.0);
-                long long key = network->nodes[i].tag.domain * 1000000LL
-                              + network->nodes[i].tag.index;
-                node_was_inside[key] = true;
-            }
-        }
- 
-        rebuild_tag_map();
- 
-        // 【修复1】对所有外侧邻居对两两检查并连接
-        // size==0 或 size==1：不需要连接
-        // size==2：一对，原有逻辑
-        // size>=3：junction，多对两两处理
-        int n_outer = (int)outer_neighbors.size();
-        for (int a = 0; a < n_outer; a++) {
-            for (int b = a + 1; b < n_outer; b++) {
- 
-                int na     = find_node_by_tag(outer_neighbors[a].tag);
-                int nb_idx = find_node_by_tag(outer_neighbors[b].tag);
- 
-                if (na < 0 || nb_idx < 0) {
-                    ExaDiS_log("Warning: Orowan outer neighbor not found by tag, skipping\n");
-                    continue;
-                }
-                if (network->find_connection(na, nb_idx) >= 0) continue;
- 
-                Vec3 pa = network->nodes[na].pos;
-                Vec3 pb = network->cell.pbc_position(pa, network->nodes[nb_idx].pos);
- 
-                // 【修复3】检查段长，防止 PBC 导致的超长段
-                double seg_len = (pb - pa).norm();
-                if (seg_len > max_seg_len) {
-                    ExaDiS_log("Warning: Orowan skipping too-long segment (%.0f b), "
-                               "likely PBC issue\n", seg_len);
-                    continue;
-                }
- 
-                // 穿越检查：只有至少一端在夹杂内才检查
-                bool na_in = is_node_in_inclusion(pa);
-                bool nb_in = is_node_in_inclusion(pb);
-                bool crosses = false;
-                if (na_in || nb_in) {
-                    for (const auto& center : inclusion_centers) {
-                        Vec3 hit;
-                        if (seg_cube_intersect(pa, pb, center, half, hit)) {
-                            crosses = true;
-                            break;
-                        }
-                    }
-                }
- 
-                if (crosses) {
-                    ExaDiS_log("Orowan: two arms on opposite sides, not connecting\n");
-                    continue;
-                }
- 
-                // 正常连接：使用 outer_neighbors[b] 的 Burgers 矢量
-                network->add_seg(na, nb_idx, outer_neighbors[b].burg,
-                                 outer_neighbors[b].plane);
-                network->generate_connectivity();
-                network->update_ptr();
-                rebuild_tag_map();
-            }
-        }
+    for (int i = 0; i < network->number_of_nodes(); i++) {
+        if (network->nodes[i].constraint == INCLUSION_NODE) continue;  // 已是 c9
+        if (network->nodes[i].constraint == PINNED_NODE)    continue;  // 钉扎源端不动
+        if (!is_node_strictly_inside_inclusion(network->nodes[i].pos)) continue;
+        network->nodes[i].constraint = INCLUSION_NODE;
+        network->nodes[i].v = Vec3(0.0);
     }
- 
-    if (iter_count >= max_iter) {
-        ExaDiS_log("Warning: insert_surface_nodes hit max iteration limit (%d)\n",
-                   max_iter);
-    }
+    correct_surface_node_positions(network);   // 就地沿 glide 把新标 c9 投影到表面
  
     network->generate_connectivity();
     network->update_ptr();
