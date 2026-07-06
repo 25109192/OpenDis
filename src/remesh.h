@@ -59,7 +59,7 @@ public:
         
         int nadd = 0;
         int nrem = 0;
-        int n_edgekill = 0;   // [EDGEKILL] 被 coarsen 掉的棱节点数(诊断:保护问题)
+        int n_edgekill = 0;   // [EDGEKILL] �?coarsen 掉的棱节点数(诊断:保护问题)
         
         int nsegs = network->number_of_segs();
         for (int i = 0; i < nsegs; i++) {
@@ -85,14 +85,14 @@ public:
             } else if (length < minseg && params.coarsen_mode == 0) {
                     if (network->nodes[n1].constraint == SURFACE_NODE ||
                         network->nodes[n2].constraint == SURFACE_NODE) continue;
-                // ★ 夹杂棱节点保护:仅保住"棱吸面"(棱节点存活、面节点并入它)。
-                //   棱-棱段交给下面的共面判据:共线冗余点(两臂共面)正常 coarsen,
-                //   真角点(两臂不共面)自然被保留——不再按段长一刀切保护。
-                if (system->inclusion_enabled) {
+                // �?夹杂棱节点保�?仅保�?棱吸�?(棱节点存活、面节点并入�?�?
+                //   �?棱段交给下面的共面判�?共线冗余�?两臂共面)正常 coarsen,
+                //   真角�?两臂不共�?自然被保留——不再按段长一刀切保护�?
+                if (system->inclusion.enabled) {
                     bool e1 = system->inclusion_on_edge(network->nodes[n1].pos, 2.0);
                     bool e2 = system->inclusion_on_edge(network->nodes[n2].pos, 2.0);
                     if (e1 != e2) {
-                        // 一端棱、一端非棱:保住棱节点,把非棱端并入它
+                        // 一端棱、一端非�?保住棱节�?把非棱端并入�?
                         int keep = e1 ? n1 : n2;
                         int drop = e1 ? n2 : n1;
                         if (network->nodes[drop].constraint != PINNED_NODE) {
@@ -114,7 +114,7 @@ public:
                         Vec3 p0 = network->segs[s0].plane;
                         Vec3 p1 = network->segs[s1].plane;
                         if (cross(p0, p1).norm2() < 1e-3) {
-                            if (system->inclusion_enabled && system->inclusion_on_edge(network->nodes[n1].pos, 2.0)) n_edgekill++;
+                            if (system->inclusion.enabled && system->inclusion_on_edge(network->nodes[n1].pos, 2.0)) n_edgekill++;
                             network->merge_nodes_position(n2, n1, r2, system->dEp);
                             system->crystal.reset_node_glide_planes(network, n2);
                             nrem++;
@@ -127,7 +127,7 @@ public:
                         Vec3 p0 = network->segs[s0].plane;
                         Vec3 p1 = network->segs[s1].plane;
                         if (cross(p0, p1).norm2() < 1e-3) {
-                            if (system->inclusion_enabled && system->inclusion_on_edge(network->nodes[n2].pos, 2.0)) n_edgekill++;
+                            if (system->inclusion.enabled && system->inclusion_on_edge(network->nodes[n2].pos, 2.0)) n_edgekill++;
                             network->merge_nodes_position(n1, n2, r1, system->dEp);
                             system->crystal.reset_node_glide_planes(network, n1);
                             nrem++;
@@ -142,7 +142,7 @@ public:
                         } else if (network->nodes[n1].constraint != UNCONSTRAINED) {
                             rmid = r1;
                         }
-                        if (system->inclusion_enabled && system->inclusion_on_edge(network->nodes[n2].pos, 2.0)) n_edgekill++;
+                        if (system->inclusion.enabled && system->inclusion_on_edge(network->nodes[n2].pos, 2.0)) n_edgekill++;
                         network->merge_nodes_position(n1, n2, rmid, system->dEp);
                         system->crystal.reset_node_glide_planes(network, n1);
                         nrem++;

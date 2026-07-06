@@ -635,8 +635,8 @@ void ExaDiSApp::step(Control& ctrl)
     // Mobility calculation
     mobility->compute(system);
 
-    // ★ 积分前：先清零已固定节点的速度
-   /* if (system->inclusion_enabled) {
+    // �?积分前：先清零已固定节点的速度
+   /* if (system->inclusion.enabled) {
         SerialDisNet* net = system->get_serial_network();
         int nnodes = net->number_of_nodes();
         for (int i = 0; i < nnodes; ++i) {
@@ -645,53 +645,47 @@ void ExaDiSApp::step(Control& ctrl)
         }
     }*/
 
-    // ★ 积分前：把表面节点速度投影到所在面上
-    if (system->inclusion_enabled) {
+    // �?积分前：把表面节点速度投影到所在面�?
+    if (system->inclusion.enabled) {
         SerialDisNet* net = system->get_serial_network();
-        system->project_surface_node_velocity(net);
+        system->inclusion.before_integrate(system, net);
     }
 
     // 时间积分
     integrator->integrate(system);
 
-    // ★ 积分后：处理穿越边界的线段，插入表面节点
-    if (system->inclusion_enabled) {
+    // �?积分后：处理穿越边界的线段，插入表面节点
+    if (system->inclusion.enabled) {
         SerialDisNet* net = system->get_serial_network();
-        system->insert_surface_nodes(net);
-        system->insert_edge_nodes(net);   // Stage 10c: 在捕获前插棱,使交点严格落在 A、B 之间(t<1)
-        system->update_inclusion_constraints(net);
-        system->correct_surface_node_positions(net);
+        system->inclusion.after_integrate(system, net);
     }
 
     oprec_save_integration(ctrl);
     system->plastic_strain();
     system->reset_glide_planes();
 
-    // ★ reset之后：固定节点并清除幽灵段
-    if (system->inclusion_enabled) {
+    // �?reset之后：固定节点并清除幽灵�?
+    if (system->inclusion.enabled) {
         SerialDisNet* net = system->get_serial_network();
-        system->update_inclusion_constraints(net);
+        system->inclusion.after_reset_glide(system, net);
     }
 
-    // Collision（内部调用 purge_network，清除幽灵段）
+    // Collision（内部调�?purge_network，清除幽灵段�?
     collision->handle(system);
-    // 检测奥罗万环（collision之后调用，此时零Burgers段已产生）
-    if (system->inclusion_enabled) {
+    // 检测奥罗万环（collision之后调用，此时零Burgers段已产生�?
+    if (system->inclusion.enabled) {
         SerialDisNet* net = system->get_serial_network();
-        system->detect_orowan_loop(net);
+        system->inclusion.after_collision(system, net);
     }
     // Topology
     topology->handle(system);
 
     // Remesh
     remesh->remesh(system);
-    // ★ Topology和Remesh之后再处理一次夹杂
-    if (system->inclusion_enabled) {
+    // �?Topology和Remesh之后再处理一次夹�?
+    if (system->inclusion.enabled) {
         SerialDisNet* net = system->get_serial_network();
-        system->insert_surface_nodes(net);
-        system->insert_edge_nodes(net);   // Stage 10c: 在捕获前插棱,使交点严格落在 A、B 之间(t<1)
-        system->update_inclusion_constraints(net);
-        system->correct_surface_node_positions(net);
+        system->inclusion.after_topology_remesh(system, net);
     }
     // Update stress
     update_mechanics(ctrl);

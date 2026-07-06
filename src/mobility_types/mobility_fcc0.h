@@ -80,7 +80,7 @@ struct MobilityFCC0
         Vec3 vi(0.0);
         
 
-        // INCLUSION_NODE 是夹杂表面节点,直接判断类型即可,不需要查 map
+        // INCLUSION_NODE 是夹杂表面节�?直接判断类型即可,不需要查 map
         bool is_surface_pin = (nodes[i].constraint == INCLUSION_NODE);
         
         int nconn = conn[i].num;
@@ -171,14 +171,14 @@ struct MobilityFCC0
                 if (vmax > 0.0) 
                     apply_velocity_cap(vmax, vscale, vi);
 
-                // ★ 晶体学严格化:表面 PIN 节点投影到 "滑移面 ∩ 夹杂表面" 交线方向
+                // �?晶体学严格化:表面 PIN 节点投影�?"滑移�?�?夹杂表面" 交线方向
                 if (is_surface_pin) {
                     if (system->inclusion_on_edge(nodes[i].pos, 2.0)) {
                         vi = Vec3(0.0);  // edge/corner node: fully pinned
                     } else {
                         Vec3 n_surface;
                         if (system->inclusion_single_face_normal(nodes[i].pos, n_surface) >= 0) {
-                            if (ngc >= 1) {   // ngc>=2: 也用 norm[0] 的面∩平面线,和位置约束一致(刻意近似)
+                            if (ngc >= 1) {   // ngc>=2: 也用 norm[0] 的面∩平面线,和位置约束一�?刻意近似)
                                 Vec3 n_glide = norm[0];
                                 Vec3 l = cross(n_glide, n_surface);
                                 double l_norm = l.norm();
@@ -198,8 +198,8 @@ struct MobilityFCC0
             }
         }
         // 表面节点（SURFACE_NODE 类型）：速度投影到夹杂表面切平面
-        // 注：当前代码中没有使用 SURFACE_NODE 类型，但保留这段作为兼容
-        if (nodes[i].constraint == SURFACE_NODE && system->inclusion_enabled) {
+        // 注：当前代码中没有使�?SURFACE_NODE 类型，但保留这段作为兼容
+        if (nodes[i].constraint == SURFACE_NODE && system->inclusion.enabled) {
             Vec3 n = system->inclusion_surface_normal(nodes[i].pos);
             vi = vi - dot(vi, n) * n;
         }

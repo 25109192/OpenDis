@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.14)
 set(SOURCES
     driver.cpp
     generate.cpp
+    inclusion.cpp
     network.cpp
     oprec.cpp
     system.cpp

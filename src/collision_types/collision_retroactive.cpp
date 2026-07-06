@@ -1652,10 +1652,10 @@ void CollisionRetroactive::retroactive_collision(System* system)
     }
     
     delete neighbor;
-    // ★ 奥罗万环识别：合并完成后，检测是否形成了包裹夹杂的封闭位错环
-// 封闭环的特征：所有节点都是PINNED_NODE，且它们相互连接形成环
-if (system->inclusion_enabled && nmerge > 0) {
-    system->detect_orowan_loop(network); // 新增函数（可选，用于统计）
+    // �?奥罗万环识别：合并完成后，检测是否形成了包裹夹杂的封闭位错环
+// 封闭环的特征：所有节点都是PINNED_NODE，且它们相互连接形成�?
+if (system->inclusion.enabled && nmerge > 0) {
+    system->detect_orowan_loop(network); // 新增函数（可选，用于统计�?
 }
   
     // Now we have to loop for collisions on hinge joints (i.e zipping)
