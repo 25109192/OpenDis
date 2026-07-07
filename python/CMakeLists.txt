@@ -24,6 +24,7 @@ set(EXADIS_SRC_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 set(SOURCES
     ${EXADIS_SRC_PATH}/driver.cpp
     ${EXADIS_SRC_PATH}/generate.cpp
+    ${EXADIS_SRC_PATH}/inclusion.cpp
     ${EXADIS_SRC_PATH}/network.cpp
     ${EXADIS_SRC_PATH}/oprec.cpp
     ${EXADIS_SRC_PATH}/system.cpp
