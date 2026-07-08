@@ -167,6 +167,9 @@ void InclusionManager::update_constraints(System* system, SerialDisNet* network)
     static int total_fixed_count = 0;
     int new_fixed = 0;
     int new_projected = 0;
+    int skip_pinned = 0;
+    int skip_surface_c9 = 0;
+    int skip_no_contact = 0;
     double half = a_dim * 0.5;
 
     const double CONTACT_MARGIN = 5.0;  // 鎺ヨЕ鍒ゅ畾浣欓噺(b):鎶撹创闈絾灏忓箙鍋忓嚭鐨勮妭鐐?
@@ -175,11 +178,17 @@ void InclusionManager::update_constraints(System* system, SerialDisNet* network)
     // 绗竴姝ワ細鎵弿鑺傜偣锛屾崟鑾峰湪鍐呴儴銆佽〃闈笂銆佹垨琛ㄩ潰澶栨瀬杩戠殑鑺傜偣
     // ============================================================
     for (int i = 0; i < nnodes; ++i) {
-        if (network->nodes[i].constraint == PINNED_NODE) continue;
+        if (network->nodes[i].constraint == PINNED_NODE) {
+            skip_pinned++;
+            continue;
+        }
         // 鏁戣€屼笉鍒?宸插湪琛ㄩ潰鐨?c9 鐓ф棫璺宠繃;婕傝繘澶规潅鍐呴儴鐨?c9 涓嶈烦杩?钀藉埌涓嬮潰鐢?
         // glide_line 褰掍綅鍥炶〃闈?淇?d),浠庤€屽惊鐜? 鎵埌鏃跺凡鏃?鍐呴儴绔偣",鍏舵涓嶈娓呴浂鍒犳帀銆?
         if (network->nodes[i].constraint == INCLUSION_NODE &&
-            !is_node_strictly_inside_inclusion(network->nodes[i].pos)) continue;
+            !is_node_strictly_inside_inclusion(network->nodes[i].pos)) {
+            skip_surface_c9++;
+            continue;
+        }
 
         Vec3 pos = network->nodes[i].pos;
 
@@ -199,7 +208,10 @@ void InclusionManager::update_constraints(System* system, SerialDisNet* network)
             }
         }
 
-        if (!is_inside_or_on) continue;
+        if (!is_inside_or_on) {
+            skip_no_contact++;
+            continue;
+        }
         if (detected_incl < 0) continue;
 
         // ---- 鎵惧埌鏈€杩戦潰銆佽绠楁姇褰变綅缃拰娉曞悜閲?----
@@ -263,8 +275,9 @@ void InclusionManager::update_constraints(System* system, SerialDisNet* network)
 
     if (new_fixed > 0 || ghost_segs > 0) {
         total_fixed_count += new_fixed;
-        ExaDiS_log("Step: new fixed=%d (projected=%d), total fixed=%d, ghost segs zeroed=%d\n",
-                   new_fixed, new_projected, total_fixed_count, ghost_segs);
+        ExaDiS_log("[INCDIAG] update fixed=%d projected=%d total=%d ghost=%d skip:pinned=%d surface_c9=%d no_contact=%d\n",
+                   new_fixed, new_projected, total_fixed_count, ghost_segs,
+                   skip_pinned, skip_surface_c9, skip_no_contact);
         if (ghost_segs > 0) {
             ExaDiS_log("*** Orowan ring candidate: ghost segs = %d ***\n", ghost_segs);
         }
@@ -440,6 +453,12 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
     std::vector<SplitInfo> to_split;
     struct ClipInfo { int seg_id; Vec3 hit_in; Vec3 hit_out; int incl_id; };
     std::vector<ClipInfo> to_clip;
+    int skip_both_pinned = 0;
+    int skip_both_inside = 0;
+    int skip_was_inside = 0;
+    int skip_pinned_inside = 0;
+    int split_candidates = 0;
+    int clip_candidates = 0;
 
     int nsegs_initial = network->number_of_segs();
     for (int i = 0; i < nsegs_initial; i++) {
@@ -448,7 +467,10 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
  
         bool n1_pinned = (network->nodes[n1].constraint == INCLUSION_NODE);
         bool n2_pinned = (network->nodes[n2].constraint == INCLUSION_NODE);
-        if (n1_pinned && n2_pinned) continue;
+        if (n1_pinned && n2_pinned) {
+            skip_both_pinned++;
+            continue;
+        }
  
         Vec3 p1 = network->nodes[n1].pos;
         Vec3 p2 = network->cell.pbc_position(p1, network->nodes[n2].pos);
@@ -456,7 +478,10 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
         bool p1_in = is_node_in_inclusion(p1);
         bool p2_in = is_node_in_inclusion(p2);
 
-        if (p1_in && p2_in) continue;  // 鍏ㄥ湪鍐呴儴,浜ょ粰绗簩闃舵鍒犻櫎
+        if (p1_in && p2_in) {
+            skip_both_inside++;
+            continue;  // 鍏ㄥ湪鍐呴儴,浜ょ粰绗簩闃舵鍒犻櫎
+        }
 
         if (!p1_in && !p2_in) {
             // 鍒囧叆:涓ょ鍦ㄥ銆佸鸡妯垏澶规潅(瑙?妫辨枩鍏ュ皠)
@@ -464,6 +489,7 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
                 Vec3 hin, hout;
                 if (seg_cube_clip(p1, p2, centers[incl_idx], half, hin, hout)) {
                     to_clip.push_back({i, hin, hout, incl_idx});
+                    clip_candidates++;
                     break;
                 }
             }
@@ -479,10 +505,16 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
         long long inner_key = network->nodes[inner_node].tag.domain * 1000000LL
                             + network->nodes[inner_node].tag.index;
         auto it = node_was_inside.find(inner_key);
-        if (it != node_was_inside.end() && it->second) continue;
+        if (it != node_was_inside.end() && it->second) {
+            skip_was_inside++;
+            continue;
+        }
  
         bool n1_in = p1_in, n2_in = p2_in;
-        if ((n1_pinned && n2_in) || (n2_pinned && n1_in)) continue;
+        if ((n1_pinned && n2_in) || (n2_pinned && n1_in)) {
+            skip_pinned_inside++;
+            continue;
+        }
  
         // 鎵?p_in 鎵€灞炲す鏉傦紝浠?p_in 涓哄熀鍑嗘姌鍙?p_out
         Vec3 best_hit;
@@ -506,10 +538,17 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
             break;
         }
 
-        if (found) to_split.push_back({i, best_hit, found_incl_id});
+        if (found) {
+            to_split.push_back({i, best_hit, found_incl_id});
+            split_candidates++;
+        }
     }
  
     if (to_split.empty()) {
+        if (!to_clip.empty() || skip_was_inside > 0 || skip_both_inside > 0)
+            ExaDiS_log("[INCDIAG] surface scan split=%d clip=%d skip:both_pinned=%d both_inside=%d was_inside=%d pinned_inside=%d\n",
+                       split_candidates, clip_candidates, skip_both_pinned,
+                       skip_both_inside, skip_was_inside, skip_pinned_inside);
         node_was_inside.clear();
         for (int i = 0; i < network->number_of_nodes(); i++) {
             if (is_node_in_inclusion(network->nodes[i].pos)) {
@@ -641,6 +680,12 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
         ExaDiS_log("[EDGEPROBE] clip segs=%zu, edge-corner inserted=%d\n",
                    to_clip.size(), clip_corner);
 
+    if (!to_split.empty() || !to_clip.empty() || skip_was_inside > 0 || skip_both_inside > 0)
+        ExaDiS_log("[INCDIAG] surface split=%zu clip=%zu inserted=%d skip:both_pinned=%d both_inside=%d was_inside=%d pinned_inside=%d clip_corner=%d\n",
+                   to_split.size(), to_clip.size(), new_surface_nodes,
+                   skip_both_pinned, skip_both_inside, skip_was_inside,
+                   skip_pinned_inside, clip_corner);
+
     if (new_surface_nodes > 0) {
         network->generate_connectivity();
         network->update_ptr();
@@ -715,8 +760,13 @@ void InclusionManager::correct_surface_node_positions(System* system, SerialDisN
     double half = a_dim * 0.5;
 
     int nnodes = network->number_of_nodes();
+    int corrected = 0;
+    int edge_like = 0;
+    int face_like = 0;
+    int large_drift = 0;
     for (int i = 0; i < nnodes; i++) {
         if (network->nodes[i].constraint != INCLUSION_NODE) continue;
+        corrected++;
         int incl_id = -1; double bestd2 = 1e30;
         for (int k = 0; k < (int)centers.size(); k++) {
             Vec3 d = network->nodes[i].pos - centers[k];
@@ -750,22 +800,30 @@ void InclusionManager::correct_surface_node_positions(System* system, SerialDisN
         int near_half = (fabs(local.x) >= half-2.0) + (fabs(local.y) >= half-2.0)
                       + (fabs(local.z) >= half-2.0);
         Vec3 proj;
-        if (near_half >= 2)
+        if (near_half >= 2) {
+            edge_like++;
             proj = inclusion_project_edge_point(local, half, glide_n);
-        else
+        } else {
+            face_like++;
             proj = has_glide
                  ? inclusion_project_glide_line(local, face_sign, half, glide_n)
                  : inclusion_project_capture(local, face_sign, half, 30.0);
+        }
         Vec3 new_pos = network->cell.pbc_fold(center + proj);
 
         double drift = (new_pos - old_pos).norm();
-        if (drift > 500.0)
+        if (drift > 500.0) {
+            large_drift++;
             ExaDiS_log("[FIX] src=correct_NEW tag=(%d,%d) jump=%.0f from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)\n",
                        network->nodes[i].tag.domain, network->nodes[i].tag.index, drift,
                        old_pos.x, old_pos.y, old_pos.z, new_pos.x, new_pos.y, new_pos.z);
+        }
         network->nodes[i].pos = new_pos;
 
     }
+    if (corrected > 0 || large_drift > 0)
+        ExaDiS_log("[INCDIAG] correct nodes=%d face=%d edge=%d large_drift=%d\n",
+                   corrected, face_like, edge_like, large_drift);
 }
 
 /*---------------------------------------------------------------------------
@@ -789,6 +847,8 @@ void InclusionManager::insert_edge_nodes(System* system, SerialDisNet* network)
     int p_anchor_edge=0, p_nocross=0, p_vertex=0, p_minsep=0, p_insert=0;
     int p_c9chord=0, p_c9corner=0;   // C9-C9 绌垮績寮?妫€鍑?/ 鎴愬姛鎻掕
     int p_c9_axiskip=0, p_c9_vertex=0, p_c9_degen=0;  // [EDGEPROBE] C9-C9 璺宠繃鍘熷洜(璇婃柇:鎹曟崏)
+    int p_seen = 0;
+    int p_c9free = 0;
 
     for (int i = 0; i < nsegs; i++) {
         if (network->segs[i].burg.norm2() < 1e-20) continue;
@@ -798,6 +858,7 @@ void InclusionManager::insert_edge_nodes(System* system, SerialDisNet* network)
         bool c1 = (network->nodes[n1].constraint == INCLUSION_NODE);
         bool c2 = (network->nodes[n2].constraint == INCLUSION_NODE);
         if (!c1 && !c2) continue;
+        p_seen++;
 
         int na = c1 ? n1 : n2, nb = c1 ? n2 : n1;
 
@@ -859,6 +920,7 @@ void InclusionManager::insert_edge_nodes(System* system, SerialDisNet* network)
 
         // 鈹€鈹€ 涓€绔?c9銆佷竴绔嚜鐢?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         // 鑷敱绔?nb 涓嶅湪闈笂,"闈㈠唴绌垮嚭鐐?鍙傛暟 0<t<1 鎴愮珛,鍘熷垽鎹湰灏辫兘姝ｇ‘鎻掕銆?
+        p_c9free++;
         if (on_edge(network->nodes[na].pos, 2.0)) { p_anchor_edge++; continue; }
 
         Vec3 xcut;
@@ -882,9 +944,10 @@ void InclusionManager::insert_edge_nodes(System* system, SerialDisNet* network)
     }
 
     if (p_anchor_edge+p_nocross+p_vertex+p_minsep+p_insert+p_c9chord+p_c9corner > 0)
-        ExaDiS_log("[EDGEPROBE] c9corner=%d/%d(chord) free_insert=%d skip: "
+        ExaDiS_log("[INCDIAG] edge seen=%d c9free=%d c9corner=%d/%d(chord) free_insert=%d skip: "
                    "vertex=%d minsep=%d anchoredge=%d nocross=%d | c9skip: axis=%d vert=%d degen=%d\n",
-                   p_c9corner, p_c9chord, p_insert, p_vertex, p_minsep, p_anchor_edge, p_nocross,
+                   p_seen, p_c9free, p_c9corner, p_c9chord, p_insert,
+                   p_vertex, p_minsep, p_anchor_edge, p_nocross,
                    p_c9_axiskip, p_c9_vertex, p_c9_degen);
 
     if (updated) {
