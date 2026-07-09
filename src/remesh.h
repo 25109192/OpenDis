@@ -89,12 +89,15 @@ public:
                 //   �?棱段交给下面的共面判�?共线冗余�?两臂共面)正常 coarsen,
                 //   真角�?两臂不共�?自然被保留——不再按段长一刀切保护�?
                 if (system->inclusion.enabled) {
-                    bool e1 = system->inclusion_on_edge(network->nodes[n1].pos, 2.0);
-                    bool e2 = system->inclusion_on_edge(network->nodes[n2].pos, 2.0);
-                    if (e1 != e2) {
+                    bool protect1 = (network->nodes[n1].constraint == INCLUSION_NODE &&
+                                     system->inclusion_on_edge(network->nodes[n1].pos, 2.0));
+                    bool protect2 = (network->nodes[n2].constraint == INCLUSION_NODE &&
+                                     system->inclusion_on_edge(network->nodes[n2].pos, 2.0));
+                    if (protect1 && protect2) continue;
+                    if (protect1 != protect2) {
                         // 一端棱、一端非�?保住棱节�?把非棱端并入�?
-                        int keep = e1 ? n1 : n2;
-                        int drop = e1 ? n2 : n1;
+                        int keep = protect1 ? n1 : n2;
+                        int drop = protect1 ? n2 : n1;
                         if (network->nodes[drop].constraint != PINNED_NODE) {
                             network->merge_nodes_position(keep, drop,
                                           network->nodes[keep].pos, system->dEp);
