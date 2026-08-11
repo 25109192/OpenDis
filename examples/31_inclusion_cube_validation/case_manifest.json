@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "case_name": "inclusion_cube_seed42",
+  "purpose": "Algorithm verification for an impenetrable axis-aligned cubic inclusion; not a quantitative gamma-prime rafting model.",
+  "baseline_head_before_c1": "465b361ceb6ca51d842d36544fd875d8960d8b56",
+  "random_seed": 42,
+  "input": {
+    "file": "fr_network_seed42.data",
+    "sha256": "52739d75fe2a28807f0a78bb63c184813066a223c1a1615c979c01c57d5186f7",
+    "network_type": "one pinned FCC Frank-Read source",
+    "initial_nodes": 10,
+    "initial_segments": 9
+  },
+  "material_and_core": {
+    "parameter_set_label": "FCC numerical benchmark inherited from the existing minimal case; not nickel-superalloy calibrated",
+    "burgmag_m": 2.55e-10,
+    "shear_modulus_Pa": 5.46e10,
+    "poisson_ratio": 0.324,
+    "core_radius_b": 1.0
+  },
+  "cell_and_inclusion": {
+    "cell_shape": "orthorhombic periodic cube",
+    "cell_edge_m": 2.5e-6,
+    "cell_edge_b": 9803.921568627451,
+    "inclusion_shape": "axis-aligned cube",
+    "cube_edge_m": 8.0e-7,
+    "cube_edge_b": 3137.254901960784,
+    "requested_volume_fraction": 0.034,
+    "expected_array": [1, 1, 1],
+    "expected_centers_b": [[4901.960784313725, 4901.960784313725, 4901.960784313725]],
+    "expected_realized_volume_fraction": 0.032768,
+    "expected_net_channel_m": [1.7e-6, 1.7e-6, 1.7e-6]
+  },
+  "numerics": {
+    "max_segment_length_b": 800.0,
+    "min_segment_length_b": 200.0,
+    "relative_tolerance_b": 0.25,
+    "annihilation_radius_b": 0.5,
+    "initial_time_step_s": 1.0e-12,
+    "maximum_time_step_s": 1.0e-10,
+    "force_mode": "SUBCYCLING_MODEL",
+    "force_grid": [32, 32, 32],
+    "mobility_law": "FCC_0",
+    "edge_mobility_Pa_inv_s_inv": 64103.0,
+    "screw_mobility_Pa_inv_s_inv": 64103.0,
+    "maximum_velocity_m_s": 50.0,
+    "integrator": "Subcycling",
+    "subcycling_radius_groups_b": [0.0, 100.0, 400.0, 800.0],
+    "collision_mode": "Retroactive",
+    "topology_mode": "TopologyParallel",
+    "remesh_rule": "LengthBased",
+    "remesh_coarsen_mode": 0,
+    "cross_slip": "disabled"
+  },
+  "loading": {
+    "mode": "strain_rate",
+    "engineering_strain_rate_s_inv": 50.0,
+    "loading_direction": [0.0, 0.0, 1.0],
+    "maximum_engineering_strain": 0.002
+  },
+  "output": {
+    "print_frequency_steps": 10,
+    "configuration_frequency_steps": 50,
+    "properties": ["Step", "Strain", "Stress", "Density", "Nnodes", "Nsegs", "dt", "Time", "Walltime", "Allstress"],
+    "units": {
+      "Step": "1",
+      "Strain": "1",
+      "Stress": "Pa",
+      "Density": "m^-2",
+      "Nnodes": "1",
+      "Nsegs": "1",
+      "dt": "s",
+      "Time": "s",
+      "Walltime": "s",
+      "Allstress": "requests the six tensor components below",
+      "Sxx": "Pa",
+      "Syy": "Pa",
+      "Szz": "Pa",
+      "Sxy": "Pa",
+      "Sxz": "Pa",
+      "Syz": "Pa"
+    }
+  },
+  "known_limits": [
+    "The cube is a transition geometry for mechanism testing, not a gamma-prime raft.",
+    "No lattice-misfit stress, elastic contrast, precipitate cutting, thermal cross-slip, or climb is enabled.",
+    "A zero-Burgers surface chord is only a bypass candidate; closed Orowan loops must be verified from configurations.",
+    "A segment crossing opposite cube faces is rejected because the current surface-routing model cannot resolve that chord with the required two edge nodes.",
+    "The parameter set has not been calibrated for a nickel-based single-crystal superalloy."
+  ]
+}

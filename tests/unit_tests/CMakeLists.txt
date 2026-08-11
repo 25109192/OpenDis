@@ -1,6 +1,7 @@
 
 set(TESTS
     test_force
+    test_inclusion
     test_neighbor
 )
 

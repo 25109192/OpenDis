@@ -12,22 +12,43 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
+#include <stdexcept>
 #include <string>
 
 namespace ExaDiS {
+
+namespace {
+
+double parse_environment_double(const char* name, const char* value)
+{
+    try {
+        size_t parsed = 0;
+        double number = std::stod(value, &parsed);
+        if (value[parsed] != '\0' || !std::isfinite(number))
+            throw std::invalid_argument("not a finite number");
+        return number;
+    } catch (const std::exception&) {
+        ExaDiS_fatal("Error: %s must be a finite number (received '%s')\n", name, value);
+    }
+    return 0.0; // ExaDiS_fatal does not return; keeps compilers satisfied.
+}
+
+} // namespace
+
 void InclusionManager::initialize(System* system, SerialDisNet *network)
 {
     double inclusion_a_phys = 0.0;
     const char* a_str = std::getenv("INCLUSION_A");
     if (a_str != nullptr) {
-        inclusion_a_phys = std::stod(a_str);
+        inclusion_a_phys = parse_environment_double("INCLUSION_A", a_str);
         if (inclusion_a_phys > 0.0) enabled = true;
     }
 
     double vol_frac = 0.10;
     const char* vol_str = std::getenv("INCLUSION_VOL_FRAC");
     if (vol_str != nullptr) {
-        vol_frac = std::stod(vol_str);
+        vol_frac = parse_environment_double("INCLUSION_VOL_FRAC", vol_str);
         if (vol_frac <= 0.0 || vol_frac > 1.0) {
             ExaDiS_log("Warning: INCLUSION_VOL_FRAC=%f out of range, using 0.10\n", vol_frac);
             vol_frac = 0.10;
@@ -35,13 +56,21 @@ void InclusionManager::initialize(System* system, SerialDisNet *network)
     }
 
     if (enabled && !initialized) {
+        if (network->cell.is_triclinic()) {
+            ExaDiS_fatal("Error: axis-aligned cubic inclusions currently require an orthorhombic cell\n");
+        }
+        if (!(system->params.burgmag > 0.0)) {
+            ExaDiS_fatal("Error: inclusion initialization requires burgmag > 0 m\n");
+        }
+
         a_dim = inclusion_a_phys / system->params.burgmag;
+        requested_vol_frac = vol_frac;
 
         double Lx_dim = network->cell.H.xx();
         double Ly_dim = network->cell.H.yy();
         double Lz_dim = network->cell.H.zz();
 
-        double box_vol = Lx_dim * Ly_dim * Lz_dim;
+        double box_vol = network->cell.volume();
         double inclusion_vol = a_dim * a_dim * a_dim;
         int N_total = (int)round(vol_frac * box_vol / inclusion_vol);
         int Nx = (int)round(pow((double)N_total, 1.0/3.0));
@@ -51,6 +80,10 @@ void InclusionManager::initialize(System* system, SerialDisNet *network)
         double dx = Lx_dim / Nx;
         double dy = Ly_dim / Ny;
         double dz = Lz_dim / Nz;
+        array_nx = Nx;
+        array_ny = Ny;
+        array_nz = Nz;
+        array_spacing = Vec3(dx, dy, dz);
 
         if (a_dim > dx || a_dim > dy || a_dim > dz) {
             ExaDiS_log("Warning: inclusion size may cause overlap! a_dim=%.2f, dx=%.2f, dy=%.2f, dz=%.2f\n",
@@ -59,19 +92,32 @@ void InclusionManager::initialize(System* system, SerialDisNet *network)
 
         centers.clear();
         for (int i = 0; i < Nx; ++i) {
-            double cx = dx * (i + 0.5);
+            double cx = network->cell.origin.x + dx * (i + 0.5);
             for (int j = 0; j < Ny; ++j) {
-                double cy = dy * (j + 0.5);
+                double cy = network->cell.origin.y + dy * (j + 0.5);
                 for (int k = 0; k < Nz; ++k) {
-                    double cz = dz * (k + 0.5);
+                    double cz = network->cell.origin.z + dz * (k + 0.5);
                     centers.push_back(Vec3(cx, cy, cz));
                 }
             }
         }
         centers_valid = true;
+        realized_vol_frac = centers.size() * inclusion_vol / box_vol;
+        double vf_rel_error = (realized_vol_frac - requested_vol_frac) / requested_vol_frac;
+        double bx = system->params.burgmag;
 
-        ExaDiS_log("Inclusion array: %d x %d x %d = %d inclusions, a_dim=%.2f, vol_frac=%.2f\n",
-                   Nx, Ny, Nz, (int)centers.size(), a_dim, vol_frac);
+        ExaDiS_log("Inclusion geometry (axis-aligned cubes):\n");
+        ExaDiS_log("  cube edge: %.9e m = %.3f nm = %.3f b\n",
+                   inclusion_a_phys, inclusion_a_phys*1.0e9, a_dim);
+        ExaDiS_log("  cell size: %.3f x %.3f x %.3f b\n", Lx_dim, Ly_dim, Lz_dim);
+        ExaDiS_log("  array: %d x %d x %d = %d inclusions\n",
+                   Nx, Ny, Nz, (int)centers.size());
+        ExaDiS_log("  center spacing: %.3f x %.3f x %.3f b\n", dx, dy, dz);
+        ExaDiS_log("  net channel: %.3f x %.3f x %.3f b = %.3f x %.3f x %.3f nm\n",
+                   dx-a_dim, dy-a_dim, dz-a_dim,
+                   (dx-a_dim)*bx*1.0e9, (dy-a_dim)*bx*1.0e9, (dz-a_dim)*bx*1.0e9);
+        ExaDiS_log("  volume fraction: requested=%.9f realized=%.9f relative_error=%+.6f%%\n",
+                   requested_vol_frac, realized_vol_frac, 100.0*vf_rel_error);
         for (size_t idx = 0; idx < std::min((size_t)10, centers.size()); ++idx) {
             ExaDiS_log("  Inclusion %zu: center=(%.2f, %.2f, %.2f)\n",
                        idx, centers[idx].x, centers[idx].y, centers[idx].z);
@@ -544,7 +590,7 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
         }
     }
  
-    if (to_split.empty()) {
+    if (to_split.empty() && to_clip.empty()) {
         if (!to_clip.empty() || skip_was_inside > 0 || skip_both_inside > 0)
             ExaDiS_log("[INCDIAG] surface scan split=%d clip=%d skip:both_pinned=%d both_inside=%d was_inside=%d pinned_inside=%d\n",
                        split_candidates, clip_candidates, skip_both_pinned,
@@ -673,6 +719,11 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
                         node_was_inside[ke] = true;
                     }
                 }
+            } else if (ain == aout) {
+                ExaDiS_fatal("Error: a segment crossed opposite faces of a cubic inclusion. "
+                             "The current surface-routing model cannot resolve this chord "
+                             "without two edge nodes; reduce segment length/time step and "
+                             "inspect the preceding configuration.\n");
             }
         }
     }
@@ -689,7 +740,7 @@ void InclusionManager::insert_surface_nodes(System* system, SerialDisNet* networ
     if (new_surface_nodes > 0) {
         network->generate_connectivity();
         network->update_ptr();
-        ExaDiS_log("Orowan: inserted %d surface nodes on inclusion boundary\n",
+        ExaDiS_log("[INCDIAG] inserted %d surface nodes on inclusion boundary\n",
                    new_surface_nodes);
     }
  
@@ -726,18 +777,33 @@ void InclusionManager::detect_orowan_loop(SerialDisNet* network)
 {
     if (!enabled) return;
 
+    std::set<std::pair<NodeTag, NodeTag> > current_candidates;
     for (int i = 0; i < network->number_of_segs(); i++) {
         if (network->segs[i].burg.norm2() < 1e-20) {
             int n1 = network->segs[i].n1;
             int n2 = network->segs[i].n2;
             if (network->nodes[n1].constraint == INCLUSION_NODE &&
                 network->nodes[n2].constraint == INCLUSION_NODE) {
-                orowan_loop_count++;
-                ExaDiS_log("Orowan loop detected! Total count: %d\n", orowan_loop_count);
-                return;  // 姣忔鏈€澶氳褰曚竴娆?
+                NodeTag tag1 = network->nodes[n1].tag;
+                NodeTag tag2 = network->nodes[n2].tag;
+                if (tag2 < tag1) std::swap(tag1, tag2);
+                current_candidates.insert(std::make_pair(tag1, tag2));
             }
         }
     }
+
+    for (const auto& key : current_candidates) {
+        if (active_bypass_candidates.find(key) == active_bypass_candidates.end()) {
+            bypass_candidate_count++;
+            ExaDiS_log("[INCDIAG] new inclusion bypass candidate: "
+                       "nodes=((%d,%d),(%d,%d)), total=%d; "
+                       "closed-loop/Orowan status not yet verified\n",
+                       key.first.domain, key.first.index,
+                       key.second.domain, key.second.index,
+                       bypass_candidate_count);
+        }
+    }
+    active_bypass_candidates.swap(current_candidates);
 }
 /*---------------------------------------------------------------------------
  *

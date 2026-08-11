@@ -12,6 +12,8 @@
 
 #include "types.h"
 #include <cmath>
+#include <set>
+#include <utility>
 #include <vector>
 #include <unordered_map>
 
@@ -26,7 +28,15 @@ public:
     std::vector<Vec3> centers;
     bool centers_valid = false;
     bool initialized = false;
+    double requested_vol_frac = 0.0;
+    double realized_vol_frac = 0.0;
+    Vec3 array_spacing = Vec3(0.0);
+    int array_nx = 0, array_ny = 0, array_nz = 0;
+    // Kept for source compatibility. A zero-Burgers inclusion chord is not,
+    // by itself, sufficient evidence of a closed Orowan loop.
     int orowan_loop_count = 0;
+    int bypass_candidate_count = 0;
+    std::set<std::pair<NodeTag, NodeTag> > active_bypass_candidates;
     std::unordered_map<long long, bool> node_was_inside;
 
     void initialize(System* system, SerialDisNet* network);
