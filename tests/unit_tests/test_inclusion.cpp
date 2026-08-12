@@ -5,6 +5,7 @@
  *-------------------------------------------------------------------------*/
 
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -16,6 +17,18 @@ using namespace ExaDiS;
 namespace {
 
 int failures = 0;
+
+void set_environment(const char* name, const char* value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value == nullptr ? "" : value);
+#else
+    if (value == nullptr)
+        unsetenv(name);
+    else
+        setenv(name, value, 1);
+#endif
+}
 
 void check(bool condition, const std::string& message)
 {
@@ -34,6 +47,33 @@ InclusionManager make_cube()
     inclusion.centers.push_back(Vec3(50.0, 50.0, 50.0));
     inclusion.centers_valid = true;
     return inclusion;
+}
+
+void test_deferred_initialization_without_burgmag()
+{
+    set_environment("INCLUSION_A", "1e-6");
+    set_environment("INCLUSION_VOL_FRAC", "0.064");
+
+    System system;
+    SerialDisNet network(10000.0);
+
+    system.inclusion.initialize(&system, &network);
+    check(!system.inclusion.enabled,
+          "an unparameterized placeholder system must defer inclusion setup");
+    check(!system.inclusion.initialized,
+          "deferred inclusion setup must remain uninitialized");
+
+    system.params.burgmag = 2.55e-10;
+    system.inclusion.initialize(&system, &network);
+    check(system.inclusion.enabled,
+          "inclusion setup must activate after burgmag becomes valid");
+    check(system.inclusion.initialized,
+          "inclusion setup must complete after burgmag becomes valid");
+    check(system.inclusion.centers.size() == 1,
+          "the deferred-initialization test geometry must contain one cube");
+
+    set_environment("INCLUSION_A", nullptr);
+    set_environment("INCLUSION_VOL_FRAC", nullptr);
 }
 
 void add_single_segment(SerialDisNet& network, const Vec3& p1, const Vec3& p2)
@@ -168,6 +208,7 @@ void test_bypass_candidate_deduplication()
 int main(int argc, char* argv[])
 {
     ExaDiS::Initialize init(argc, argv);
+    test_deferred_initialization_without_burgmag();
     test_surface_classification();
     test_non_intersecting_segment();
     test_outside_outside_adjacent_face_clip();

@@ -56,11 +56,17 @@ void InclusionManager::initialize(System* system, SerialDisNet *network)
     }
 
     if (enabled && !initialized) {
+        // Python bindings create placeholder System objects with default
+        // Params (burgmag == -1) before constructing the fully parameterized
+        // simulation System. Defer inclusion setup for those placeholders;
+        // a fresh InclusionManager will initialize when valid Params are used.
+        if (!(system->params.burgmag > 0.0)) {
+            enabled = false;
+            return;
+        }
+
         if (network->cell.is_triclinic()) {
             ExaDiS_fatal("Error: axis-aligned cubic inclusions currently require an orthorhombic cell\n");
-        }
-        if (!(system->params.burgmag > 0.0)) {
-            ExaDiS_fatal("Error: inclusion initialization requires burgmag > 0 m\n");
         }
 
         a_dim = inclusion_a_phys / system->params.burgmag;
